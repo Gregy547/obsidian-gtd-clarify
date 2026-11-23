@@ -1,0 +1,80 @@
+name: Release
+
+# Obsidian installs a plugin from three files attached to a GitHub release:
+# main.js, manifest.json and styles.css. The release's tag must match manifest.json's
+# version exactly and carry no "v" prefix: Obsidian looks the release up by that tag.
+#
+# Two ways to start it:
+# - From the browser: Actions → Release → Run workflow. It releases the version in
+#   manifest.json from the newest commit on the branch you pick, and creates the tag.
+# - From the command line: push a version tag (`npm version x.y.z`, then
+#   `git push --follow-tags`).
+
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build and test
+        run: npm test
+
+      - name: Work out the version to release
+        run: |
+          MANIFEST=$(node -p "require('./manifest.json').version")
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            VERSION="${GITHUB_REF_NAME}"
+            if [ "$VERSION" != "$MANIFEST" ]; then
+              echo "Tag $VERSION does not match manifest version $MANIFEST" >&2
+              exit 1
+            fi
+          else
+            VERSION="$MANIFEST"
+            # A version is released once. Releasing again means raising the version first.
+            if gh release view "$VERSION" > /dev/null 2>&1; then
+              echo "Release $VERSION already exists. Raise the version first (README: Releasing), then run this again." >&2
+              exit 1
+            fi
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Take this version's notes from CHANGELOG.md
+        run: |
+          awk -v v="${VERSION}" '
+            $0 ~ "^## " v "( |$)" { on = 1; next }
+            on && /^## / { exit }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then echo "See CHANGELOG.md for details." > notes.md; fi
+
+      - name: Create release
+        # --target only applies when the tag does not exist yet (a run from the browser):
+        # the tag is then made on the commit that was just built and tested.
+        run: |
+          gh release create "${VERSION}" \
+            --target "${GITHUB_SHA}" \
+            --title "${VERSION}" \
+            --notes-file notes.md \
+            main.js manifest.json styles.css
