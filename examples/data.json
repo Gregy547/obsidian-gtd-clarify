@@ -1,0 +1,155 @@
+{
+  "somedayNotePath": "Someday/Someday.md",
+  "referenceFolder": "",
+  "referenceTemplatePath": "",
+  "curatedMoveTargets": [],
+  "newNoteFolder": "",
+  "projectFolder": "Projects",
+  "newNoteTemplatePath": "",
+  "templateEngine": "auto",
+  "templateFolder": "",
+  "taskPlaceholder": "{{tasks}}",
+  "enablePriorityStep": true,
+  "enableCustomTagStep": false,
+  "clarifyNextAction": true,
+  "nudgeVagueActions": true,
+  "vagueOpeners": null,
+  "fillerPrefixes": null,
+  "guidanceDisplay": "onDemand",
+  "hideTickledTasks": true,
+  "enableCompleteOption": true,
+  "enableCancelOption": true,
+  "enableDeleteOption": true,
+  "confirmBeforeDelete": false,
+  "highlightSourceLine": true,
+  "numberKeys": true,
+  "numberKeysUsed": false,
+  "projectTag": "project",
+  "waitingForTag": "waitingfor",
+  "organiseAfterProcessing": false,
+  "recentDestinations": [],
+  "sweepInboxPath": "- Inbox -.md",
+  "areasFolder": "AreasOfFocus",
+  "sweepProjects": true,
+  "sweepContexts": true,
+  "sweepTriggers": null,
+  "savedQueries": [
+    {
+      "name": "Overview",
+      "query": "not done\nis not blocked\n(tags include creative) OR (tags include critical) OR (tags include intake) OR (tags include admin) OR (tags include social) OR (tags include strategy)\nPath does not include Someday/\nPath does not include Archive/\nPath does not include Inbox\npath does not include Work/\nTags do not include Someday"
+    },
+    {
+      "name": "Home",
+      "query": "not done\nis not blocked\nno due date\n(tags include home) OR (tags include phone) OR (tags include lookup) OR (tags include pc)\ntags do not include #someday\ntags do not include #waitingfor\n(tags include creative) OR (tags include critical) OR (tags include intake) OR (tags include social) OR (tags include admin) OR (tags include strategy)"
+    },
+    {
+      "name": "Work",
+      "query": "not done\nis not blocked\npath includes Work/\npath does not include Work/Someday/\npath does not include Work/Archive/\nno due date\n(no scheduled date) OR (scheduled before today)\ntags do not include #someday\ntags do not include #waitingfor"
+    }
+  ],
+  "lastCustomQuery": "not done\nis not blocked",
+  "dimensions": [
+    {
+      "id": "context",
+      "label": "Context",
+      "group": "Physical context",
+      "defaultFormat": "tag",
+      "values": [
+        {
+          "id": "home",
+          "label": "Home",
+          "value": "home"
+        },
+        {
+          "id": "errands",
+          "label": "Outings",
+          "value": "outings"
+        },
+        {
+          "id": "val_q9w2ls",
+          "label": "Phone",
+          "value": "phone"
+        },
+        {
+          "id": "val_vqrhib",
+          "label": "Agenda",
+          "value": "agenda"
+        }
+      ]
+    },
+    {
+      "id": "mode",
+      "label": "Processing mode",
+      "group": "Mental processing mode",
+      "defaultFormat": "tag",
+      "values": [
+        {
+          "id": "creative",
+          "label": "Creative",
+          "value": "creative"
+        },
+        {
+          "id": "val_yuj9iv",
+          "label": "Critical",
+          "value": "critical"
+        },
+        {
+          "id": "val_ygebav",
+          "label": "Intake",
+          "value": "intake"
+        },
+        {
+          "id": "val_npmdw9",
+          "label": "Admin",
+          "value": "admin"
+        },
+        {
+          "id": "val_vgjyse",
+          "label": "Social",
+          "value": "social"
+        },
+        {
+          "id": "val_qirndc",
+          "label": "Strategy",
+          "value": "strategy"
+        }
+      ]
+    },
+    {
+      "id": "energy",
+      "label": "Energy",
+      "group": "Energy",
+      "defaultFormat": "text",
+      "values": [
+        {
+          "id": "hi",
+          "label": "High",
+          "value": "hi"
+        },
+        {
+          "id": "lo",
+          "label": "Low",
+          "value": "lo"
+        }
+      ]
+    },
+    {
+      "id": "duration",
+      "label": "Duration",
+      "group": "Duration",
+      "defaultFormat": "text",
+      "values": [
+        {
+          "id": "long",
+          "label": "Long",
+          "value": "long"
+        },
+        {
+          "id": "val_1zja9b",
+          "label": "Short",
+          "value": "short"
+        }
+      ]
+    }
+  ]
+}

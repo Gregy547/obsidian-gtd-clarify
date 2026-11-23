@@ -1,0 +1,522 @@
+/* GTD Clarify — styles use Obsidian theme variables for light/dark + theme compatibility
+   (Spec: NFR-2). Controls are sized for touch on mobile (Spec: NFR-1). */
+
+.gtd-clarify-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-3);
+  padding: var(--size-4-3);
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.gtd-clarify-header {
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+  font-weight: var(--font-semibold);
+}
+
+/* Was flex: 0 0 auto — it never shrank, so a long task or a nested subtask (parent line
+   + active line) pushed the question and answer buttons off the bottom of the pane.
+   Now it yields space, caps out at a third of the pane, and scrolls beyond that. Task
+   text is never truncated; the box is pinned to its BOTTOM so the active, most granular
+   subtask is what shows, with parent context reachable by scrolling up.
+   min-height: 0 is load-bearing: without it a flex item will not shrink below its
+   content height and overflow-y never engages. */
+/* Two SEPARATE sections: the parent project line pinned above as dimmed context, and the
+   active subtask below it in its own scroll box. Only the active line scrolls, so a long
+   task stays readable without the parent — the thing that tells you where you are —
+   sliding out of view.
+   Was flex: 0 0 auto, which never shrank and pushed the question and answer buttons off
+   the bottom. min-height: 0 is load-bearing throughout: without it a flex item will not
+   shrink below its content height and overflow-y never engages. */
+/* ONE scroll region covering both boxes. Each box keeps its natural height (flex: 0 0
+   auto below), so nothing is clipped and neither scrolls internally — you scroll the
+   region to move between them. Pinned to the bottom in JS, so the active subtask shows
+   and the project box is reached by scrolling up.
+   min-height: 0 is load-bearing: a flex item will not shrink below its content height
+   without it, and overflow-y never engages. */
+.gtd-clarify-task {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 40%;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+/* Padding deliberately NOT reduced alongside the prompt controls: the task text is what
+   the whole review is about, and the space freed below is meant to go to it. */
+.gtd-clarify-taskline {
+  min-width: 0;
+  padding: var(--size-4-2) var(--size-4-3);
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-small);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* When organising a project's subtasks, the parent project line is shown above the
+   active subtask as dimmed context (Spec: GEN-7). Pinned: it does not scroll away, and
+   is capped so a long project title cannot crowd out the task being decided on. */
+.gtd-clarify-taskparent {
+  background: var(--background-primary);
+  color: var(--text-muted);
+  margin-bottom: var(--size-4-1);
+  flex: 0 0 auto;
+}
+
+/* The line currently being worked on — emphasised with an accent edge and weight so it's
+   obvious which subtask is active (fixes the "looks like the same one" confusion). */
+.gtd-clarify-taskactive {
+  border-left: 3px solid var(--interactive-accent);
+  font-weight: var(--font-semibold);
+  flex: 0 0 auto;
+}
+
+.gtd-clarify-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-1);
+  overflow-y: auto;
+}
+
+/* Plain weight, so the bold key word stands out: on a semibold question it barely showed. */
+.gtd-clarify-question {
+  margin: 0;
+  font-size: var(--font-ui-small);
+  font-weight: normal;
+  line-height: var(--line-height-tight);
+}
+
+.gtd-clarify-group {
+  margin-top: var(--size-4-1);
+  font-size: var(--font-ui-smaller);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+
+/* "suggested" on the context a task's verb points to: a quiet tag at the end of the
+   button, so the answer reads first and every button keeps its place. */
+.gtd-clarify-suggested {
+  margin-left: auto;
+  padding-left: var(--size-4-2);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+}
+
+/* Sweep: the reminders under a prompt, the field with its Add button, what has been
+   captured at this prompt, and the ways on. */
+.gtd-clarify-reminders {
+  margin: 0 0 var(--size-4-2);
+  padding-left: 1.4em;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+.gtd-clarify-sweep-row {
+  display: flex;
+  gap: var(--size-4-2);
+  align-items: center;
+}
+.gtd-clarify-sweep-row .gtd-clarify-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.gtd-clarify-sweep-row .gtd-clarify-add {
+  flex: 0 0 auto;
+  width: auto;
+}
+.gtd-clarify-captured {
+  margin: var(--size-4-2) 0;
+  padding: 0;
+  list-style: none;
+}
+.gtd-clarify-captured li {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  padding: var(--size-2-2) 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.gtd-clarify-captured li > span {
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+}
+.gtd-clarify-uncapture {
+  flex: 0 0 auto;
+  width: auto;
+  padding: 0 var(--size-4-2);
+  color: var(--text-faint);
+  background: none;
+  box-shadow: none;
+}
+.gtd-clarify-uncapture:hover {
+  color: var(--text-error);
+}
+.gtd-clarify-sweep-controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-1);
+  margin-top: var(--size-4-2);
+}
+
+/* What the review did, at the end: a short list, quieter than the message above it. */
+.gtd-clarify-summary {
+  margin: 0;
+  padding-left: 1.4em;
+  color: var(--text-muted);
+}
+.gtd-clarify-summary li {
+  margin: var(--size-2-1) 0;
+}
+
+/* Option buttons are the bulk of the pane's vertical cost — a Process step can show six
+   or more at once, and in a sidebar that is most of the visible height.
+   Sized per platform rather than with one flat number: a pointer can hit a 32px row
+   precisely, a thumb cannot. Desktop gets the compact size; mobile keeps a target close
+   to the 44px touch guideline, trimmed only as far as stays comfortable. */
+.gtd-clarify-btn {
+  width: 100%;
+  min-height: 32px;
+  text-align: left;
+  /* Obsidian lays buttons out as centred flex boxes; text-align alone doesn't reach that. */
+  justify-content: flex-start;
+  padding: var(--size-2-1) var(--size-4-2);
+  border-radius: var(--radius-m);
+  line-height: var(--line-height-tight);
+  cursor: pointer;
+}
+
+body.is-mobile .gtd-clarify-btn {
+  min-height: 40px;
+  padding: var(--size-4-1) var(--size-4-2);
+}
+
+.gtd-clarify-btn.mod-muted {
+  color: var(--text-muted);
+}
+
+/* "Skip step": its own row at the right, the same place on every optional step, and quiet.
+   Most steps are answered, so the answers are what the eye should land on; it used to be a
+   full-width accent button above them. Far from the nav's "Skip task", by design. */
+.gtd-clarify-btn.gtd-clarify-skip {
+  width: auto;
+  align-self: flex-end;
+  min-height: 0;
+  padding: var(--size-2-1) var(--size-4-2);
+  color: var(--text-muted);
+  background: transparent;
+  box-shadow: none;
+  font-size: var(--font-ui-smaller);
+}
+
+.gtd-clarify-btn.gtd-clarify-skip:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+/* An on-demand tip, until its info button is tapped. A class rather than an inline style, so a
+   theme or snippet can change how it is shown. */
+.gtd-clarify-guidance.gtd-clarify-collapsed {
+  display: none;
+}
+
+/* The bold word in a question or an answer: the one that tells it apart. Its colour is left
+   to the theme, so it looks the way bold looks in your notes. */
+.gtd-clarify-btn strong,
+.gtd-clarify-question strong {
+  font-weight: var(--font-bold);
+}
+
+/* A numbered answer: the number in its own column, so a label that wraps stays clear of it. */
+/* Centred in the button's height, which Obsidian fixes: aligning to the baseline put the
+   label at the top of that box. The height is let go so a long label can wrap. */
+.gtd-clarify-btn.gtd-clarify-numbered {
+  display: flex;
+  align-items: center;
+  height: auto;
+  white-space: normal;
+}
+
+.gtd-clarify-numbered > .gtd-clarify-key {
+  flex: 0 0 auto;
+}
+
+.gtd-clarify-numbered > :last-child {
+  flex: 1 1 auto;
+}
+
+/* The number key for an answer. Fixed width, so labels line up whatever the digit. */
+/* A tint rather than a border alone: on a dark theme the border colour is the button's own
+   colour, so the box disappeared and only a faint digit was left. */
+.gtd-clarify-key {
+  display: inline-block;
+  min-width: 1.4em;
+  margin-right: var(--size-4-2);
+  padding: 0 var(--size-2-1);
+  border-radius: var(--radius-s);
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+  line-height: var(--line-height-tight);
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  text-align: center;
+}
+
+/* No keys on a phone. The code doesn't add the numbers there either; this is the backstop. */
+body.is-phone .gtd-clarify-key {
+  display: none;
+}
+
+/* The pane takes focus so number keys reach it; that needs no visible ring. */
+.gtd-clarify-body:focus {
+  outline: none;
+}
+
+/* Deliberately NOT .mod-warning: Obsidian's desktop stylesheet gives that class a solid
+   red fill, which is why Exit rendered as a pure red block on desktop while mobile looked
+   fine. Styled here in full so both platforms match — red label, ordinary button body. */
+.gtd-clarify-btn.gtd-clarify-exit {
+  color: var(--text-error);
+  background: var(--interactive-normal);
+  box-shadow: var(--input-shadow);
+}
+
+.gtd-clarify-btn.gtd-clarify-exit:hover {
+  color: var(--text-error);
+  background: var(--background-modifier-error-hover);
+}
+
+.gtd-clarify-input {
+  width: 100%;
+  min-height: 32px;
+}
+
+body.is-mobile .gtd-clarify-input {
+  min-height: 40px;
+}
+
+/* Wraps rather than overflowing: Organise adds a fifth button, which on a phone-width
+   sidebar no longer fits on one row. */
+.gtd-clarify-nav {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-4-1);
+  padding-top: var(--size-4-1);
+  margin-top: var(--size-4-1);
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.gtd-clarify-nav .gtd-clarify-btn {
+  width: auto;
+  flex: 1 1 0;
+  text-align: center;
+  justify-content: center;
+}
+
+/* Dimension editor in settings (SET-3 / EXT-2). */
+.gtd-clarify-dim-editor {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  padding: var(--size-4-2) var(--size-4-3);
+  margin-bottom: var(--size-4-3);
+}
+
+/* Alias indicator in the note/folder picker (switcher-style ranking). */
+.gtd-clarify-suggestion-alias {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+/* Paths in Obsidian's "Excluded files" list are deprioritised, not hidden — dim them
+   so it is obvious why they sorted low. */
+.suggestion-item.gtd-clarify-suggestion-ignored .suggestion-title,
+.suggestion-item.gtd-clarify-suggestion-ignored .suggestion-note {
+  opacity: 0.55;
+}
+
+/* While a text prompt is focused the soft keyboard halves the pane, which used to shove
+   the Skip/Exit bar up to sit directly under the input. Drop the nav and shrink the task
+   preview so the question and field get the room; both return on blur. */
+.gtd-clarify-view.is-typing .gtd-clarify-nav {
+  display: none;
+}
+
+/* Compacted links inside a task line: raw URLs are often longer than the task itself.
+   nowrap so an abbreviation never breaks across lines, which would defeat the point. */
+/* Was white-space: nowrap, to stop an abbreviated URL breaking mid-way. That overrode the
+   box's word-break, so in a narrow sidebar the link ran past the edge instead. Wrapping a
+   compacted link is the lesser evil: overflow-wrap only breaks it when it genuinely will
+   not fit. */
+.gtd-clarify-link {
+  color: var(--text-accent);
+  border-bottom: 1px dotted var(--text-accent);
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.gtd-clarify-link:hover {
+  color: var(--text-accent-hover);
+  border-bottom-color: var(--text-accent-hover);
+}
+
+/* Both rewind actions sit left of Skip/Exit. Restart is the one reached for most often —
+   an error in the task currently in front of you — so it keeps normal button contrast.
+   Revert undoes the previous task as well, which is rarer and wider-reaching, so it is
+   muted to sit clearly below Restart in the hierarchy.
+   Targeted by class rather than by [aria-label^="Undo"] as before: matching on label text
+   breaks silently the moment a label is reworded. */
+.gtd-clarify-nav .gtd-clarify-restart {
+  font-weight: var(--font-medium);
+}
+
+.gtd-clarify-nav .gtd-clarify-revert {
+  color: var(--text-muted);
+}
+
+/* Query parse errors, listed when a query uses a filter this plugin does not implement. */
+.gtd-clarify-queryerror {
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-error);
+  padding: var(--size-2-1) 0;
+}
+
+/* A nav action that is present but not currently available. Kept in the layout so the
+   buttons beside it never move. */
+.gtd-clarify-nav .gtd-clarify-btn-disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Where a queried task came from. A query spans the vault, so the note and heading are
+   often the only way to tell two similarly-worded tasks apart. */
+.gtd-clarify-tasksource {
+  flex: 0 0 auto;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  padding-bottom: var(--size-2-1);
+  overflow-wrap: anywhere;
+}
+
+/* GTD guidance shown alongside a question — what a good answer looks like. Quieter than
+   the question itself so it reads as help, not as another thing to respond to. */
+.gtd-clarify-guidance {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  line-height: var(--line-height-tight);
+  padding: var(--size-2-1) 0 var(--size-4-1);
+  border-left: 2px solid var(--interactive-accent);
+  padding-left: var(--size-4-2);
+}
+
+/* "Tap ⓘ to show" tips. The button sits at the end of the question line so the question
+   stays readable at a glance, and the tip costs nothing until it is asked for. */
+.gtd-clarify-question .gtd-clarify-info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: var(--size-4-1);
+  padding: 0 var(--size-2-2);
+  min-height: 0;
+  width: auto;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: var(--text-faint);
+  font-size: var(--font-ui-small);
+  font-weight: normal;
+  line-height: 1;
+  vertical-align: middle;
+  cursor: pointer;
+}
+
+.gtd-clarify-question .gtd-clarify-info:hover,
+.gtd-clarify-question .gtd-clarify-info.is-active {
+  color: var(--interactive-accent);
+}
+
+/* A thumb needs more than the glyph's own size to hit reliably. Padding enlarges the tap
+   area without enlarging the visible icon or pushing the question onto two lines. */
+body.is-mobile .gtd-clarify-question .gtd-clarify-info {
+  padding: var(--size-2-2) var(--size-4-2);
+  margin: calc(-1 * var(--size-2-2)) 0;
+}
+
+/* Internal links share the external link style, so a link reads as a link whatever it
+   points at. An unresolved one is faded, as Obsidian shows it: opening it creates the note. */
+.gtd-clarify-link.gtd-clarify-internal-link {
+  text-decoration: none;
+}
+
+.gtd-clarify-link.gtd-clarify-internal-link.is-unresolved {
+  opacity: 0.6;
+  border-bottom-style: dashed;
+}
+
+/* The note a query found the task in. Underlined only on hover, so the path stays quiet
+   context until you reach for it. */
+.gtd-clarify-tasksource .gtd-clarify-sourcelink {
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.gtd-clarify-tasksource .gtd-clarify-sourcelink:hover {
+  color: var(--text-accent);
+  text-decoration: underline;
+}
+
+/* Why this item's wording was flagged. Always shown, unlike GTD tips: it's about this
+   item, not general advice you can learn once. */
+.gtd-clarify-note {
+  font-size: var(--font-ui-small);
+  padding-bottom: var(--size-4-1);
+}
+
+/* The phrase lists in settings: monospace, so one-per-line reads as a list. */
+.gtd-clarify-phraselist {
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  width: 100%;
+  min-width: 14em;
+}
+
+/* Re-process sits with the recovery actions and, like Revert, is quieter than Restart. */
+.gtd-clarify-nav .gtd-clarify-reprocess {
+  color: var(--text-muted);
+}
+
+/* "Another date…": the date read from your words, shown before you use it. */
+.gtd-clarify-datepreview {
+  min-height: 1.4em;
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+}
+
+.gtd-clarify-datepreview.is-problem {
+  color: var(--text-error);
+}
+
+.gtd-clarify-calendar {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+}
+
+.gtd-clarify-dateinput {
+  flex: 1 1 auto;
+  min-height: 32px;
+}
