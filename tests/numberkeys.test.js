@@ -151,7 +151,8 @@ test("the pane takes focus, so the key reaches it rather than the note", () => {
   p.choice("**Actionable** this week?", [{ label: "Yes", value: true }]);
   assert.strictEqual(p.bodyEl.focused, true);
   assert.match(main, /this\.bodyEl\.setAttribute\("tabindex", "-1"\)/);
-  assert.match(main, /this\.registerDomEvent\(document, "keydown", \(e\) => this\.onAnswerKey\(e\)\)/);
+  // Listened for in the pane's own window, so keys still work in a pop-out window.
+  assert.match(main, /this\.registerDomEvent\(this\.containerEl\.ownerDocument, "keydown", \(e\) => this\.onAnswerKey\(e\)\)/);
 });
 
 /* ------------------------------ the setting and hint ------------------------------ */

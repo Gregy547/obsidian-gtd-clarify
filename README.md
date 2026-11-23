@@ -49,7 +49,7 @@ Each run ends with a short summary of what became of the tasks — six next acti
 waiting on someone else, three to Someday, and so on.
 
 Everything happens in a sidebar pane rather than a modal, so the note stays visible while
-you work. This plugin has also been optimised for use on both mobile and desktop.
+you work.
 
 ## Sweep: emptying your head
 
@@ -417,13 +417,18 @@ loads; `main.js` is not committed, and is attached to each release instead.
 ```bash
 npm install     # once: the build and lint tools
 npm run build   # src/main.js → main.js
-npm run lint    # the rules Obsidian's automated review applies
+npm run lint    # the rules Obsidian's automated review applies, and a type check
 npm test        # build, then run the test suite
 npm run check   # lint + tests, as CI runs them
 ```
 
 To try a change in a vault, build and copy `main.js`, `manifest.json` and `styles.css` into
 that vault's `.obsidian/plugins/gtd-clarify/`, then reload the plugin.
+
+The source is JavaScript typed with JSDoc comments (`/** @param {obsidian.TFile} file */`).
+The types change nothing at runtime; they let `tsc` and the review's type-aware lint rules
+check the code, and `npm run lint` runs both. The shared shapes — settings, a review item,
+the context every step is handed — are defined once, near the top of `src/main.js`.
 
 The tests run on Node's built-in test runner. They load the built `main.js` with a stub
 `obsidian` module (`tests/helpers/`), so they exercise the code that ships rather than a

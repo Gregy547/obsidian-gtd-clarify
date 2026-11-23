@@ -144,3 +144,23 @@ test("you are the author and copyright holder, and the README credits how it was
   assert.match(read("README.md"), /^Built by Greg A with Claude Code\./m);
   assert.strictEqual(JSON.parse(read("package.json")).author, "Greg A");
 });
+
+test("the source is linted and type-checked the way Obsidian's review checks it", () => {
+  // The review applies typescript-eslint's type-checked rules to JavaScript too; the
+  // plugin's own config only applies them to .ts, so they are added for src/ here.
+  const eslintConfig = read("eslint.config.mjs");
+  assert.match(eslintConfig, /files: \["src\/\*\*\/\*\.js"\],\s*extends: \[tseslint\.configs\.recommendedTypeChecked\]/);
+  // The JSDoc types are checked by tsc as part of `npm run lint`, so a wrong one fails CI.
+  assert.match(JSON.parse(read("package.json")).scripts.lint, /eslint \. && tsc --noEmit -p tsconfig\.json/);
+  const ts = JSON.parse(read("tsconfig.json")).compilerOptions;
+  assert.strictEqual(ts.checkJs, true);
+  assert.strictEqual(ts.noImplicitAny, true, "an untyped parameter is an error, not a silent any");
+  assert.strictEqual(ts.strictBindCallApply, true, "fn.call(...) keeps its types");
+});
+
+test("nothing in the source reaches for the main window's document by name", () => {
+  // Obsidian can show notes and panes in pop-out windows. `activeDocument` is the window
+  // in use, and a pane's own `ownerDocument` is the window it is in.
+  const code = source.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+  assert.ok(!/(?<![\w.])document\b/.test(code.replace(/activeDocument|ownerDocument/g, "")), "use activeDocument or ownerDocument");
+});

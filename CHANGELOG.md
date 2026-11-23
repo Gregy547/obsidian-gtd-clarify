@@ -3,6 +3,25 @@
 All notable changes to this project are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## 1.26.3 — 2026-11-23
+
+### Changed
+- **Obsidian's automated review has nothing left to warn about.** It type-checks the
+  plugin's JavaScript, and with no types to go on it reported 3,680 warnings — every use of
+  every function's arguments. The source is now typed with JSDoc comments, which change
+  nothing that runs, and a reproduction of the review finds none. (The plugin's own, stricter
+  lint settings still note five places where *Process*, *Organise* and *Sweep* are
+  capitalised as the names of its reviews; that is deliberate.)
+- **The same checks run before every release.** `npm run lint` applies the review's
+  type-aware rules and type-checks the annotations, so a regression fails the build.
+
+### Fixed
+- **Pop-out windows.** Number keys are listened for in the review pane's own window, and the
+  check for an open Tasks dialogue looks in the window in use, rather than always the main
+  window. Nothing changes in the main window.
+- Promises the plugin deliberately doesn't wait for are now marked as such, and opening the
+  review pane waits for Obsidian to finish revealing it before starting.
+
 ## 1.26.2 — 2026-11-23
 
 ### Fixed

@@ -1,6 +1,6 @@
 {
   "name": "obsidian-gtd-clarify",
-  "version": "1.26.2",
+  "version": "1.26.3",
   "description": "Guided GTD Process and Organise steps for Markdown tasks in Obsidian.",
   "main": "main.js",
   "private": true,
@@ -8,7 +8,7 @@
     "build": "esbuild src/main.js --bundle --format=cjs --target=es2021 --platform=browser --external:obsidian --external:electron --outfile=main.js --log-level=warning --banner:js=\"/* Built from src/main.js by npm run build. Edit the source, not this file. */\"",
     "pretest": "npm run build",
     "test": "node --require ./tests/helpers/globals.js --test tests/*.test.js",
-    "lint": "eslint .",
+    "lint": "eslint . && tsc --noEmit -p tsconfig.json",
     "check": "npm run lint && npm test",
     "version": "node version-bump.mjs && git add manifest.json versions.json src/main.js"
   },
@@ -25,7 +25,7 @@
     "@eslint/json": "0.14.0",
     "esbuild": "0.28.2",
     "eslint": "10.13.0",
-    "eslint-plugin-obsidianmd": "0.4.2",
+    "eslint-plugin-obsidianmd": "0.6.0",
     "obsidian": "1.8.7",
     "typescript": "5.4.5",
     "typescript-eslint": "8.72.0"

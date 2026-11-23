@@ -3,10 +3,18 @@
 // tests are Node scripts, not plugin code.
 import { defineConfig, globalIgnores } from "eslint/config";
 import obsidianmd from "eslint-plugin-obsidianmd";
+import tseslint from "typescript-eslint";
 
 export default defineConfig([
   globalIgnores(["main.js", "node_modules/", "tests/", "examples/", "version-bump.mjs"]),
   ...obsidianmd.configs.recommended,
+  // Obsidian's automated review also type-checks JavaScript, with typescript-eslint's
+  // type-checked rules (no-unsafe-*, no-floating-promises and the rest). Its own config only
+  // applies them to .ts files, so they are added here for the source, which is typed with JSDoc.
+  {
+    files: ["src/**/*.js"],
+    extends: [tseslint.configs.recommendedTypeChecked],
+  },
   {
     languageOptions: {
       parserOptions: { projectService: { allowDefaultProject: ["eslint.config.*"] } },

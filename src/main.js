@@ -10,6 +10,201 @@
  */
 import * as obsidian from "obsidian";
 
+/* ---------------------------------- Types ----------------------------------
+ * The source is JavaScript typed with JSDoc comments, so TypeScript-aware tools — the
+ * editor, `npm run lint`, and Obsidian's automated review — can check it. The comments
+ * change nothing at runtime: esbuild drops them, and the tests read the code as before.
+ * `npm run lint` type-checks these with tsc, so a wrong annotation fails the build. */
+
+/** A plugin's settings, as saved in data.json. Null phrase and trigger lists mean "use the
+ * built-in list"; see DEFAULT_SETTINGS.
+ * @typedef {Object} Settings
+ * @property {string} somedayNotePath
+ * @property {string} referenceFolder
+ * @property {string} referenceTemplatePath
+ * @property {string[]} curatedMoveTargets
+ * @property {string} newNoteFolder
+ * @property {string} projectFolder
+ * @property {string} newNoteTemplatePath
+ * @property {string} templateEngine
+ * @property {string} templateFolder
+ * @property {string} taskPlaceholder
+ * @property {boolean} enablePriorityStep
+ * @property {boolean} enableCustomTagStep
+ * @property {boolean} clarifyNextAction
+ * @property {boolean} nudgeVagueActions
+ * @property {string | null} vagueOpeners
+ * @property {string | null} fillerPrefixes
+ * @property {string} guidanceDisplay
+ * @property {boolean} hideTickledTasks
+ * @property {boolean} enableCompleteOption
+ * @property {boolean} enableCancelOption
+ * @property {boolean} enableDeleteOption
+ * @property {boolean} confirmBeforeDelete
+ * @property {boolean} highlightSourceLine
+ * @property {boolean} numberKeys
+ * @property {boolean} numberKeysUsed
+ * @property {string} projectTag
+ * @property {string} waitingForTag
+ * @property {boolean} organiseAfterProcessing
+ * @property {string[]} recentDestinations
+ * @property {string} sweepInboxPath
+ * @property {string} areasFolder
+ * @property {boolean} sweepProjects
+ * @property {boolean} sweepContexts
+ * @property {string | null} sweepTriggers
+ * @property {SavedQuery[]} savedQueries
+ * @property {string} lastCustomQuery
+ * @property {Dimension[]} dimensions
+ */
+/** @typedef {{ name: string, query: string }} SavedQuery */
+/** Settings edited as a line of text, a toggle, or a phrase list (null = built-in list).
+ * @typedef {{ [K in keyof Settings]: Settings[K] extends string ? K : never }[keyof Settings]} TextSettingKey */
+/** @typedef {{ [K in keyof Settings]: Settings[K] extends boolean ? K : never }[keyof Settings]} ToggleSettingKey */
+/** @typedef {"vagueOpeners" | "fillerPrefixes" | "sweepTriggers"} PhraseSettingKey */
+/** One Organise step (context, energy, …) and the answers it offers.
+ * @typedef {Object} Dimension
+ * @property {string} id
+ * @property {string} label
+ * @property {string} [group]
+ * @property {string} [defaultFormat]
+ * @property {DimensionValue[]} values
+ */
+/** @typedef {{ id: string, label: string, value: string, format?: string }} DimensionValue */
+
+/** One answer offered by a choice prompt.
+ * @template T
+ * @typedef {Object} ChoiceOption
+ * @property {string} label
+ * @property {T} value
+ * @property {string} [group]
+ * @property {boolean} [suggested]
+ */
+
+/** A task being reviewed: where it is, what it said, and what became of it.
+ * @typedef {Object} ReviewItem
+ * @property {obsidian.TFile} file
+ * @property {number} [startLine]
+ * @property {number} [endLine]
+ * @property {string} [raw]
+ * @property {string} [status]
+ * @property {boolean} [isProject]
+ * @property {string} [sourceLabel]
+ * @property {string} [parentRaw]
+ * @property {string} [label]
+ * @property {string} [outcome]
+ * @property {boolean} [disposed]
+ * @property {boolean} [moved]
+ * @property {boolean} [delegated]
+ * @property {boolean} [projectHandled]
+ * @property {ProjectRef} [projectAfter]
+ * @property {string} [afterWalk]
+ * @property {{ file: obsidian.TFile, line: number, raw: string }} [movedElsewhere]
+ * @property {ReviewItem[]} [splitPieces]
+ */
+/** A project task: the note it is in (absent when it is in the note being reviewed), the
+ * line it is on, its text, and the label a picker shows for it.
+ * @typedef {{ file?: obsidian.TFile, line: number, raw: string, label?: string, sourceLabel?: string }} ProjectRef */
+/** A two-minute action waiting for the batch at the end of the review.
+ * @typedef {{ file: obsidian.TFile, line: number, raw: string, removed?: boolean }} QuickEntry */
+/** The next actions made for one project in one go, so they can be fixed or removed.
+ * @typedef {{ made: { line: number, entry: QuickEntry | null }[], parentLine: number }} Session */
+
+/** What every step of a review is handed. Per-task copies add the fields marked optional.
+ * @typedef {Object} Ctx
+ * @property {PluginApp} app
+ * @property {GtdFlowPlugin} [plugin]
+ * @property {Settings} settings
+ * @property {ReviewView} prompter
+ * @property {TasksApiAdapter} [tasks]
+ * @property {string} [mode]
+ * @property {string} [sourceKind]
+ * @property {QuickEntry[]} [quickBatch]
+ * @property {DefaultFilingStrategy} [filing]
+ * @property {ReviewItem[]} [reprocessScopes]
+ * @property {ReviewItem} [walkingProject]
+ * @property {VaultJournal} [journal]
+ */
+
+/* The parts of Obsidian, Tasks and Templater this plugin reaches that are not in
+ * Obsidian's published types. Each is optional, because each can be missing: an older
+ * Obsidian, Tasks not installed, Templater switched off. */
+/** @typedef {{ executeCommandById(id: string): boolean }} AppCommands */
+/** @typedef {{ plugins: Record<string, unknown> }} AppPlugins */
+/** @typedef {{ enabled?: boolean, instance?: { options?: { folder?: string, dateFormat?: string, timeFormat?: string } } }} InternalPlugin */
+/** @typedef {{ getPluginById?(id: string): InternalPlugin | null, plugins?: Record<string, InternalPlugin> }} AppInternalPlugins */
+/** @typedef {{ getConfig?(key: string): unknown }} VaultConfig */
+/** An App, with the undocumented parts the plugin uses typed as optional.
+ * @typedef {obsidian.App & { plugins?: AppPlugins, commands?: AppCommands, internalPlugins?: AppInternalPlugins, vault: obsidian.Vault & VaultConfig }} PluginApp */
+
+/** The documented Tasks API (apiV1), the parts used here.
+ * @typedef {Object} TasksApiV1
+ * @property {() => Promise<string>} [createTaskLineModal]
+ * @property {(line: string) => Promise<string>} [editTaskLineModal]
+ * @property {(line: string, path: string) => string} [executeToggleTaskDoneCommand]
+ */
+/** The Tasks plugin object: apiV1, plus the public but undocumented getTasks/getState.
+ * @typedef {Object} TasksPlugin
+ * @property {TasksApiV1} [apiV1]
+ * @property {() => TasksTask[]} [getTasks]
+ * @property {() => string} [getState]
+ * @property {() => Promise<TasksSavedSettings | null>} [loadData]
+ */
+/** @typedef {{ setDoneDate?: boolean, setCancelledDate?: boolean, taskFormat?: string, globalFilter?: unknown }} TasksSavedSettings */
+/** A date as Tasks hands it over: a moment, or (in older versions) a string.
+ * @typedef {{ format(pattern: string): string } | string | null} TasksDate */
+/** One of Tasks' parsed tasks, the fields the query engine reads.
+ * @typedef {Object} TasksTask
+ * @property {{ path: string, lineNumber: number, precedingHeader?: string | null }} [taskLocation]
+ * @property {{ symbol?: string }} [status]
+ * @property {string} [statusCharacter]
+ * @property {string[]} [dependsOn]
+ * @property {string} [id]
+ * @property {string[]} [tags]
+ * @property {string | number} [priority]
+ * @property {string} [description]
+ * @property {string} [originalMarkdown]
+ * @property {TasksDate} [dueDate]
+ * @property {TasksDate} [startDate]
+ * @property {TasksDate} [scheduledDate]
+ * @property {TasksDate} [doneDate]
+ * @property {TasksTask | null} [parent]
+ */
+/** @typedef {"dueDate" | "startDate" | "scheduledDate" | "doneDate"} TasksDateField */
+/** @typedef {{ byId: Map<string, TasksTask[]> }} QueryContext */
+/** A compiled query filter.
+ * @typedef {(task: TasksTask, ctx: QueryContext) => boolean} TaskFilter */
+/** The Templater plugin's instance, the parts used here.
+ * @typedef {{ templater?: { create_new_note_from_template?(template: obsidian.TFile | string, folder?: obsidian.TAbstractFile | string, filename?: string, open?: boolean): Promise<obsidian.TFile | undefined> }, settings?: { templates_folder?: string } }} TemplaterPlugin */
+/** @typedef {{ type: "group", text: string } | { type: "op", op: string }} BooleanToken */
+/** @typedef {{ heading: string, items: string[] }} TriggerSection */
+/** @typedef {{ line: number, level: number, text: string, path: string }} Heading */
+/** A project task offered in a picker.
+ * @typedef {ProjectRef & { label: string }} ProjectChoice */
+/** @typedef {{ folder: string, name: string, template: obsidian.TFile }} TemplateRequest */
+/** The answers a number key can pick while a choice is on screen.
+ * @typedef {{ picks: (() => void)[], skip: (() => void) | null }} PendingKeys */
+/** @typedef {"done" | "cancelled"} FinishedKind */
+/** What Tasks writes when a task is finished, read from its saved settings.
+ * @typedef {{ doneDate: boolean, cancelledDate: boolean, dataview: boolean, globalFilter: string }} TaskDateSettings */
+/** One of the ways Process can finish with a task that is not actionable.
+ * @typedef {{ value: string, label: string, setting: "enableCompleteOption" | "enableCancelOption" | "enableDeleteOption", symbol: string | null, description: string }} DisposeAction */
+/** @typedef {{ allowStay?: boolean, question?: string, guidance?: string }} FileTaskOptions */
+/** @typedef {{ guidance?: string, placeholder?: string, allowEmpty?: boolean }} TextPromptOptions */
+/** @typedef {{ guidance?: string, placeholder?: string, after?: string, parse?: (text: string) => string | null }} DatePromptOptions */
+/** One Sweep prompt: a question, and the reminders listed under it.
+ * @typedef {{ group: string, question: string, note?: string, guidance?: string, reminders: string[], skipLabel?: string }} SweepPrompt */
+/** What a Sweep prompt calls as thoughts are added and taken back.
+ * @typedef {{ add(typed: string): Promise<string | null>, remove(text: string): Promise<boolean> }} SweepHandlers */
+/** Something a picker can offer, with what the fuzzy search ranks it by.
+ * @template T
+ * @typedef {{ item: T, name: string, folder: string, path: string, aliases: string[], depth: number, recent: number, ignored: boolean }} Candidate */
+/** A picker result: the thing found, how well it matched and which characters matched.
+ * @template T
+ * @typedef {{ item: T, match: obsidian.SearchResult, rank?: number, score?: number, nameMatches: obsidian.SearchMatches, pathMatches: obsidian.SearchMatches, alias: string | null, depth?: number, recent?: number, ignored: boolean, demoted: boolean, path?: string }} Ranked */
+/** How rendered task text opens and checks [[internal links]].
+ * @typedef {{ open(linktext: string): void, exists(linkpath: string): boolean }} InternalLinks */
+
 // ----------------------------------------------------------------------
 // src/main.ts
 // ----------------------------------------------------------------------
@@ -17,9 +212,11 @@ import * as obsidian from "obsidian";
 // ----------------------------------------------------------------------
 // src/settings.ts
 // ----------------------------------------------------------------------
+/** @param {string} prefix */
 function genId(prefix) {
   return `${prefix}_${Math.random().toString(36).slice(2, 8)}`;
 }
+/** @type {Settings} */
 var DEFAULT_SETTINGS = {
   somedayNotePath: "Someday/Someday.md",
   referenceFolder: "",
@@ -136,6 +333,10 @@ var DEFAULT_SETTINGS = {
   ]
 };
 var GtdFlowSettingTab = class extends obsidian.PluginSettingTab {
+  /**
+   * @param {PluginApp} app
+   * @param {GtdFlowPlugin} plugin
+   */
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -143,6 +344,11 @@ var GtdFlowSettingTab = class extends obsidian.PluginSettingTab {
   async save() {
     await this.plugin.saveSettings();
   }
+  /**
+   * @param {string} name
+   * @param {string} desc
+   * @param {TextSettingKey} key
+   */
   textField(name, desc, key) {
     new obsidian.Setting(this.containerEl).setName(name).setDesc(desc).addText(
       (t) => {
@@ -154,7 +360,11 @@ var GtdFlowSettingTab = class extends obsidian.PluginSettingTab {
       }
     );
   }
-  /** A multi-line phrase list stored as text, null meaning "the built-in default". */
+  /** A multi-line phrase list stored as text, null meaning "the built-in default".
+   * @param {string} name
+   * @param {string} desc
+   * @param {PhraseSettingKey} key
+   * @param {() => string} defaultText */
   phraseListField(name, desc, key, defaultText) {
     const setting = new obsidian.Setting(this.containerEl).setName(name).setDesc(desc);
     setting.addTextArea((t) => {
@@ -176,6 +386,11 @@ var GtdFlowSettingTab = class extends obsidian.PluginSettingTab {
       })
     );
   }
+  /**
+   * @param {string} name
+   * @param {string} desc
+   * @param {ToggleSettingKey} key
+   */
   toggleField(name, desc, key) {
     new obsidian.Setting(this.containerEl).setName(name).setDesc(desc).addToggle(
       (t) => t.setValue(Boolean(this.plugin.settings[key])).onChange(async (v) => {
@@ -310,6 +525,7 @@ var GtdFlowSettingTab = class extends obsidian.PluginSettingTab {
    * Stored as name + query text; the query text uses the subset of the Tasks query
    * language listed in QUERY_FILTER_HELP, because the Tasks API cannot run a real
    * search (see the tasksQuery section). */
+  /** @param {HTMLElement} containerEl */
   renderSavedQueries(containerEl) {
     new obsidian.Setting(containerEl).setName("Saved task queries").setHeading();
     new obsidian.Setting(containerEl).setDesc(
@@ -348,6 +564,7 @@ var GtdFlowSettingTab = class extends obsidian.PluginSettingTab {
   }
   /* ----------------------------- dimension editor ---------------------------- */
   // Spec: SET-3 / EXT-2. Context, energy, duration, and any custom dimension are edited here.
+  /** @param {HTMLElement} containerEl */
   renderDimensions(containerEl) {
     new obsidian.Setting(containerEl).setName("Organise dimensions").setHeading();
     containerEl.createEl("p", {
@@ -369,6 +586,11 @@ var GtdFlowSettingTab = class extends obsidian.PluginSettingTab {
       })
     );
   }
+  /**
+   * @param {HTMLElement} containerEl
+   * @param {Dimension} dim
+   * @param {number} index
+   */
   renderDimensionEditor(containerEl, dim, index) {
     const box = containerEl.createDiv({ cls: "gtd-clarify-dim-editor" });
     new obsidian.Setting(box).setName(plainText(dimensionQuestion(dim)) || "\u2014").setHeading().addExtraButton(
@@ -447,17 +669,18 @@ var TASKS_EDIT_COMMAND_ID = "obsidian-tasks-plugin:edit-task";
  * Entirely best-effort: if neither route lands, the caller has still been released. */
 function dismissOpenModal() {
   try {
-    if (typeof document === "undefined") return;
-    const button = document.querySelector(".modal-container .modal-close-button, .modal .modal-close-button");
+    if (typeof activeDocument === "undefined") return;
+    const button = /** @type {HTMLElement | null} */ (activeDocument.querySelector(".modal-container .modal-close-button, .modal .modal-close-button"));
     if (button && typeof button.click === "function") {
       button.click();
       return;
     }
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    activeDocument.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   } catch {
     // Nothing more can be done to close it; the caller has been released either way.
   }
 }
+/** @param {number} [maxMs] */
 function nextFrame(maxMs = 32) {
   return new Promise((resolve) => {
     let done = false;
@@ -471,6 +694,7 @@ function nextFrame(maxMs = 32) {
   });
 }
 var TasksApiAdapter = class {
+  /** @param {PluginApp} app */
   constructor(app) {
     this.app = app;
   }
@@ -480,7 +704,7 @@ var TasksApiAdapter = class {
   }
   api() {
     var _a, _b;
-    const plugin = (_b = (_a = this.app.plugins) == null ? void 0 : _a.plugins) == null ? void 0 : _b[TASKS_PLUGIN_ID];
+    const plugin = /** @type {TasksPlugin | undefined} */ ((_b = (_a = this.app.plugins) == null ? void 0 : _a.plugins) == null ? void 0 : _b[TASKS_PLUGIN_ID]);
     return plugin == null ? void 0 : plugin.apiV1;
   }
   /** The Tasks plugin object itself, for `getTasks()` and `getState()`.
@@ -491,7 +715,7 @@ var TasksApiAdapter = class {
    * as a known limitation (issue #2459) — so this is the only route to a query. */
   plugin() {
     var _a, _b;
-    return (_b = (_a = this.app.plugins) == null ? void 0 : _a.plugins) == null ? void 0 : _b[TASKS_PLUGIN_ID];
+    return /** @type {TasksPlugin | undefined} */ ((_b = (_a = this.app.plugins) == null ? void 0 : _a.plugins) == null ? void 0 : _b[TASKS_PLUGIN_ID]);
   }
   /** True if query-backed sourcing is possible on this Tasks version. */
   canQuery() {
@@ -534,9 +758,9 @@ var TasksApiAdapter = class {
    *
    * The vault copy is the source of truth here — we just wrote it. So: read the expected
    * text from the vault, wait until the editor agrees, and only then place the cursor.
-   */
+   * @param {obsidian.TFile} file
+   * @param {number} line */
   async editExistingInPlace(file, line) {
-    var _a, _b;
     const leaf = this.leafForFile(file);
     await leaf.openFile(file, { active: true });
     const view = leaf.view;
@@ -554,7 +778,7 @@ var TasksApiAdapter = class {
       target = moved;
       editor.setCursor({ line: target, ch: 0 });
     }
-    const ran = (_b = (_a = this.app.commands) == null ? void 0 : _a.executeCommandById) == null ? void 0 : _b.call(_a, TASKS_EDIT_COMMAND_ID);
+    const ran = this.app.commands?.executeCommandById?.(TASKS_EDIT_COMMAND_ID);
     if (!ran) {
       new obsidian.Notice("Tasks 'Create or edit task' command not found.");
       return false;
@@ -574,15 +798,18 @@ var TasksApiAdapter = class {
    *
    * Costs nothing when the user changed nothing: editor and vault already agree, so this
    * returns on the first comparison. A save is requested first so the common case does
-   * not sit through Obsidian's autosave delay. */
+   * not sit through Obsidian's autosave delay.
+   * @param {obsidian.TFile} file
+   * @param {number} line
+   * @param {obsidian.Editor} editor
+   * @param {number} [timeoutMs] */
   async flushEditorLine(file, line, editor, timeoutMs = 2e3) {
-    var _a, _b;
     const inEditor = () => (line >= 0 && line <= editor.lastLine() ? editor.getLine(line) : null);
     const expected = inEditor();
     if (expected === null) return;
     if ((await readLine(this.app, file, line)) === expected) return;
     try {
-      (_b = (_a = this.app.commands) == null ? void 0 : _a.executeCommandById) == null ? void 0 : _b.call(_a, "editor:save-file");
+      this.app.commands?.executeCommandById?.("editor:save-file");
     } catch {
       // Saving only nudges the editor to flush; the read-back below copes if it fails.
     }
@@ -598,17 +825,21 @@ var TasksApiAdapter = class {
   /** Prefer a markdown leaf already showing this file over the generic active leaf, so we
    * never navigate the review pane's own leaf and never force a needless reload (which is
    * itself one of the things that triggers the resync race below). Mirrors the leaf lookup
-   * in ReviewView.applySourceHighlight. */
+   * in ReviewView.applySourceHighlight.
+   * @param {obsidian.TFile} file */
   leafForFile(file) {
     const open = this.app.workspace.getLeavesOfType("markdown").find((l) => {
       var _a;
-      return ((_a = l.view.file) == null ? void 0 : _a.path) === file.path;
+      return ((_a = /** @type {obsidian.MarkdownView} */ (l.view).file) == null ? void 0 : _a.path) === file.path;
     });
     return open != null ? open : this.app.workspace.getLeaf(false);
   }
   /** Wait (bounded) for the open editor to catch up with the vault copy of `line`, and
    * return the index the line actually sits at. On timeout, fall back to `line` — worst
-   * case we behave exactly as before rather than stalling the review. */
+   * case we behave exactly as before rather than stalling the review.
+   * @param {obsidian.Editor} editor
+   * @param {number} line
+   * @param {string} expected */
   async settleOnLine(editor, line, expected) {
     if (expected === null) return line;
     const hit = () => line >= 0 && line <= editor.lastLine() && editor.getLine(line) === expected;
@@ -629,10 +860,14 @@ var TasksApiAdapter = class {
   /** Index of `expected` at, or nearest to, `line`; null if it is not there. Searches
    * outward to absorb a small drift, checking upward first because a lagging editor sits
    * ABOVE the vault index (the vault has inserted lines the editor has not applied yet).
-   * Nearest-first so duplicate task text resolves to the occurrence we meant. */
+   * Nearest-first so duplicate task text resolves to the occurrence we meant.
+   * @param {obsidian.Editor} editor
+   * @param {number} line
+   * @param {string} expected */
   findLine(editor, line, expected) {
     if (expected === null) return null;
     const last = editor.lastLine();
+    /** @param {number} i */
     const at = (i) => i >= 0 && i <= last && editor.getLine(i) === expected;
     if (at(line)) return line;
     for (let d = 1; d <= 5; d++) {
@@ -649,7 +884,7 @@ var TasksApiAdapter = class {
   }
   waitForModalToClose() {
     return new Promise((resolve) => {
-      const isOpen = () => !!document.querySelector(".modal-container, .modal");
+      const isOpen = () => !!activeDocument.querySelector(".modal-container, .modal");
       const appearDeadline = Date.now() + 1500;
       const watchForClose = () => {
         let done = false;
@@ -663,7 +898,7 @@ var TasksApiAdapter = class {
         const observer = new MutationObserver(() => {
           if (!isOpen()) finish();
         });
-        observer.observe(document.body, { childList: true, subtree: true });
+        observer.observe(activeDocument.body, { childList: true, subtree: true });
         /* The observer only runs on mutations. If the selector keeps matching something
          * else on screen, or the close produces no further mutation, nothing ever fires
          * it again. Poll as a backstop rather than trusting a single mechanism. */
@@ -695,7 +930,8 @@ var TasksApiAdapter = class {
    * Returns null when the API is unavailable, and "" when the user cancelled — Tasks
    * documents an empty return for cancellation. (It also returns "" for a task using
    * `🏁 delete` on-completion, which is indistinguishable; treated as a cancel, which
-   * leaves the line untouched rather than destroying it.) */
+   * leaves the line untouched rather than destroying it.)
+   * @param {string} existingLine */
   async editTaskLine(existingLine) {
     const api = this.api();
     if (!(api == null ? void 0 : api.editTaskLineModal)) return null;
@@ -711,9 +947,10 @@ var TasksApiAdapter = class {
    * One of the five Tasks priority signifiers (Spec: INT-4, ORG-6). The caller decides
    * placement; in Organise it is inserted BEFORE the date signifiers to match the order
    * the Tasks modal itself writes (fix for QA: priority before due date).
-   */
+   * @param {string} level */
   prioritySignifier(level) {
     var _a;
+    /** @type {Record<string, string>} */
     const map = {
       highest: "\u{1F53A}",
       // 🔺
@@ -733,7 +970,9 @@ var TasksApiAdapter = class {
   /** Complete a task line the way Tasks itself would, via executeToggleTaskDoneCommand
    * (Tasks 7.2.0+). Returns the resulting text — TWO lines when a recurring task was
    * completed, since Tasks writes the next occurrence alongside — or null if the API is
-   * unavailable or throws, so the caller can fall back. */
+   * unavailable or throws, so the caller can fall back.
+   * @param {string} line
+   * @param {string} path */
   toggleTaskDone(line, path) {
     const api = this.api();
     if (!api || typeof api.executeToggleTaskDoneCommand !== "function") return null;
@@ -768,9 +1007,11 @@ var TasksApiAdapter = class {
   newDependencyId() {
     return Math.random().toString(36).slice(2, 8);
   }
+  /** @param {string} id */
   idSignifier(id) {
     return `\u{1F194} ${id}`;
   }
+  /** @param {string} id */
   blockedBySignifier(id) {
     return `\u26D4 ${id}`;
   }
@@ -797,10 +1038,16 @@ var TasksApiAdapter = class {
  * button — restarts the entire project as the label promises. At the top level there is
  * no smaller unit, so `retry` and `back` do the same thing. */
 var ReviewControl = class extends Error {
+  /** @param {string} kind */
   constructor(kind) {
     super(`review-control:${kind}`);
     this.kind = kind;
     this.name = "ReviewControl";
+    /** Reprocess only: the unit it is meant for, and how to redo it. Set by whoever raises it.
+     * @type {ReviewItem | ProjectRef | undefined} */
+    this.target = undefined;
+    /** @type {string | undefined} */
+    this.how = undefined;
   }
 };
 
@@ -823,13 +1070,17 @@ var ReviewControl = class extends Error {
  * file directly rather than through our `app`. Handled by snapshotting the task's own
  * file eagerly at the start of the task, which is the only file that modal touches. */
 var VaultJournal = class {
+  /** @param {PluginApp} app */
   constructor(app) {
     this.app = app;
+    /** @type {Map<string, string>} path → contents before the first change */
     this.saved = /* @__PURE__ */ new Map();
+    /** @type {string[]} paths of notes and folders this task created */
     this.created = [];
   }
   /** Record a file's contents before it is first modified. No-op if already recorded —
-   * the FIRST state seen is the one to restore to. */
+   * the FIRST state seen is the one to restore to.
+   * @param {obsidian.TFile} file */
   async capture(file) {
     if (!file || this.saved.has(file.path)) return;
     try {
@@ -838,10 +1089,12 @@ var VaultJournal = class {
       // A file that can't be read can't be restored either, so there is nothing to keep.
     }
   }
+  /** @param {string} path */
   async captureByPath(path) {
     const f = this.app.vault.getAbstractFileByPath(path);
     if (f instanceof obsidian.TFile) await this.capture(f);
   }
+  /** @param {string} path */
   noteCreated(path) {
     this.created.push(path);
   }
@@ -887,39 +1140,59 @@ var VaultJournal = class {
 /** An `app` that looks and behaves exactly like the real one, except that every write is
  * announced to the journal first. Only the mutating methods are intercepted; everything
  * else is delegated straight through, so nothing else in the plugin can tell the
- * difference. */
+ * difference.
+ * @param {PluginApp} app
+ * @param {VaultJournal} journal
+ * @returns {PluginApp} */
 function journalledApp(app, journal) {
   const realVault = app.vault;
   const vault = {
+    /**
+     * @param {obsidian.TFile} file
+     * @param {(data: string) => string} fn
+     */
     process: async (file, fn) => {
       await journal.capture(file);
       return realVault.process(file, fn);
     },
+    /**
+     * @param {string} path
+     * @param {string} data
+     */
     create: async (path, data) => {
       const created = await realVault.create(path, data);
       journal.noteCreated(path);
       return created;
     },
+    /** @param {string} path */
     createFolder: async (path) => {
       const existed = !!realVault.getAbstractFileByPath(path);
       const folder = await realVault.createFolder(path);
       if (!existed) journal.noteCreated(path);
       return folder;
     },
+    /** @param {obsidian.TFile} f */
     read: (f) => realVault.read(f),
+    /** @param {obsidian.TFile} f */
     cachedRead: (f) => realVault.cachedRead(f),
+    /** @param {string} p */
     getAbstractFileByPath: (p) => realVault.getAbstractFileByPath(p),
     getMarkdownFiles: () => realVault.getMarkdownFiles(),
     getAllLoadedFiles: () => realVault.getAllLoadedFiles(),
     getRoot: () => realVault.getRoot(),
+    /**
+     * @param {obsidian.TAbstractFile} f
+     * @param {boolean} sys
+     */
     trash: (f, sys) => realVault.trash(f, sys),
-    getConfig: (k) => {
-      var _a;
-      return (_a = realVault.getConfig) == null ? void 0 : _a.call(realVault, k);
-    }
+    /** @param {string} k */
+    getConfig: (k) => realVault.getConfig?.(k)
   };
-  const proxy = Object.create(app);
-  proxy.vault = vault;
+  /** @type {unknown} */
+  const inherited = Object.create(app);
+  const proxy = /** @type {PluginApp} */ (inherited);
+  // Only the methods the plugin calls are wrapped, so this is a partial Vault by design.
+  proxy.vault = /** @type {obsidian.Vault & VaultConfig} */ (/** @type {unknown} */ (vault));
   return proxy;
 }
 
@@ -963,10 +1236,13 @@ var QUERY_FILTER_HELP = [
   "exclude subitems",
   "limit <n>"
 ];
+/** @type {Record<string, number>} */
 var PRIORITY_NAMES = { highest: 0, high: 1, medium: 2, none: 3, low: 4, lowest: 5 };
 
 /** Resolve a date word to a YYYY-MM-DD string. `today` is resolved once per query run so
- * every comparison in a query sees the same day. */
+ * every comparison in a query sees the same day.
+ * @param {string} iso
+ * @param {number} days */
 function shiftDate(iso, days) {
   const d = new Date(iso + "T00:00:00Z");
   d.setUTCDate(d.getUTCDate() + days);
@@ -976,7 +1252,9 @@ function shiftDate(iso, days) {
  *
  * Tasks runs dates through a natural-language parser; this understands a fixed, listed
  * vocabulary instead. Anything outside it is rejected with a clear error rather than
- * silently matching nothing, which is the failure mode that actually costs time. */
+ * silently matching nothing, which is the failure mode that actually costs time.
+ * @param {string} word
+ * @param {string} today */
 function resolveQueryDate(word, today) {
   const w = word.trim().toLowerCase();
   if (/^\d{4}-\d{2}-\d{2}$/.test(w)) return w;
@@ -990,6 +1268,10 @@ function resolveQueryDate(word, today) {
   if (w === "last week") return shiftDate(today, -7);
   return null;
 }
+/**
+ * @param {TasksTask} task
+ * @param {TasksDateField} field
+ */
 function taskDateString(task, field) {
   const v = task[field];
   if (!v) return null;
@@ -999,7 +1281,9 @@ function taskDateString(task, field) {
 }
 /** A task is blocked when something it depends on exists and is not yet done — the same
  * rule Tasks uses for `is blocked`. Unknown ids are ignored rather than treated as
- * blocking, so a deleted dependency does not strand a task forever. */
+ * blocking, so a deleted dependency does not strand a task forever.
+ * @param {TasksTask} task
+ * @param {Map<string, TasksTask[]>} byId */
 function isTaskBlocked(task, byId) {
   const deps = task.dependsOn || [];
   for (const id of deps) {
@@ -1009,17 +1293,22 @@ function isTaskBlocked(task, byId) {
   }
   return false;
 }
+/** @param {TasksTask} task */
 function isTaskDone(task) {
   var _a, _b;
   const sym = (_b = (_a = task.status) == null ? void 0 : _a.symbol) != null ? _b : task.statusCharacter;
   return COMPLETED_STATUSES.has(sym);
 }
+/** @param {string} t */
 function normaliseTag(t) {
   const s = String(t).trim().toLowerCase();
   return s.startsWith("#") ? s : "#" + s;
 }
 
-/** Compile ONE filter (no boolean operators) into a predicate, or null if unsupported. */
+/** Compile ONE filter (no boolean operators) into a predicate, or null if unsupported.
+ * @param {string} raw
+ * @param {string} today
+ * @returns {TaskFilter | null} */
 function compileSingleFilter(raw, today) {
   const line = raw.trim().toLowerCase();
   let m;
@@ -1051,13 +1340,13 @@ function compileSingleFilter(raw, today) {
   }
   if ((m = line.match(/^(has|no|not) (due|start|scheduled|done)( date)?$/))) {
     // "not due" and "no due date" both mean the field is absent.
-    const field = { due: "dueDate", start: "startDate", scheduled: "scheduledDate", done: "doneDate" }[m[2]];
+    const field = /** @type {Record<string, TasksDateField>} */ ({ due: "dueDate", start: "startDate", scheduled: "scheduledDate", done: "doneDate" })[m[2]];
     const want = m[1] === "has";
     return (t) => (taskDateString(t, field) !== null) === want;
   }
   if ((m = line.match(/^(due|starts|scheduled|done)(?: (on or before|on or after|before|after|on))? (.+)$/))) {
     // The comparator is optional: bare "due today" means "due on today", as in Tasks.
-    const field = { due: "dueDate", starts: "startDate", scheduled: "scheduledDate", done: "doneDate" }[m[1]];
+    const field = /** @type {Record<string, TasksDateField>} */ ({ due: "dueDate", starts: "startDate", scheduled: "scheduledDate", done: "doneDate" })[m[1]];
     const when = resolveQueryDate(m[3], today);
     if (!when) return null;
     const op = m[2] || "on";
@@ -1122,7 +1411,8 @@ var BOOLEAN_DELIMITERS = [
  * non-breaking spaces, zero-width joiners and full-width brackets. Every one of those
  * previously produced the same opaque "could not interpret" error, because a literal
  * space in a filter pattern does not match U+00A0. Only invisible or unambiguous
- * look-alike characters are touched; nothing that could be part of a search term. */
+ * look-alike characters are touched; nothing that could be part of a search term.
+ * @param {string} text */
 function normaliseQueryText(text) {
   return String(text == null ? "" : text)
     .replace(/\r\n?/g, "\n")
@@ -1134,7 +1424,8 @@ function normaliseQueryText(text) {
 }
 /** Lowercase boolean keywords standing alone. Tasks requires operators to be capitalised
  * so ordinary prose is never treated as one; spotting the lowercase form lets us say so
- * instead of reporting a generic parse failure. */
+ * instead of reporting a generic parse failure.
+ * @param {string} line */
 function hasLowercaseOperator(line) {
   // Only meaningful when the line is SHAPED like a boolean combination — i.e. it has
   // delimited groups. Without that guard, "due on or before today" trips on the "or"
@@ -1146,7 +1437,8 @@ function hasLowercaseOperator(line) {
 var BOOLEAN_OPERATOR_RE = /^(AND NOT|OR NOT|AND|OR|XOR|NOT)(?![A-Za-z])/;
 
 /** True if a line uses boolean combination at all. Operators must be capitalised and
- * stand alone, so ordinary prose in a filter cannot trigger this. */
+ * stand alone, so ordinary prose in a filter cannot trigger this.
+ * @param {string} line */
 function hasBooleanOperator(line) {
   // CAPITALISED operators only. That single rule separates "(a) OR (b)" — boolean intent,
   // even if the delimiters are missing — from "due on or before today", where the "or" is
@@ -1155,9 +1447,12 @@ function hasBooleanOperator(line) {
   // not a tag search for "home OR tags include phone".
   return /(^|[^A-Za-z])(AND NOT|OR NOT|AND|OR|XOR|NOT)([^A-Za-z]|$)/.test(line);
 }
-/** Join lines ending with a trailing backslash, as Tasks' Line Continuations do. */
+/** Join lines ending with a trailing backslash, as Tasks' Line Continuations do.
+ * @param {string[]} lines */
 function joinLineContinuations(lines) {
+  /** @type {string[]} */
   const out = [];
+  /** @type {string[] | null} */
   let parts = null;
   const flush = () => {
     if (parts === null) return;
@@ -1177,8 +1472,13 @@ function joinLineContinuations(lines) {
   return out;
 }
 /** Split a string into delimited groups and operators at nesting depth zero.
- * Returns null when the text is unbalanced or has bare text outside delimiters. */
+ * Returns null when the text is unbalanced or has bare text outside delimiters.
+ * @param {string} text
+ * @param {string} open
+ * @param {string} close
+ * @returns {BooleanToken[] | null} */
 function tokenizeBoolean(text, open, close) {
+  /** @type {BooleanToken[]} */
   const tokens = [];
   const sameChar = open === close;
   let i = 0;
@@ -1207,12 +1507,18 @@ function tokenizeBoolean(text, open, close) {
   }
   return tokens.length ? tokens : null;
 }
-/** Recursive-descent parse over the token list. Precedence: NOT > XOR > AND > OR. */
+/** Recursive-descent parse over the token list. Precedence: NOT > XOR > AND > OR.
+ * @param {BooleanToken[]} tokens
+ * @param {string[]} delim
+ * @param {string} today
+ * @returns {TaskFilter} */
 function parseBooleanTokens(tokens, delim, today) {
   let pos = 0;
   const peek = () => tokens[pos];
+  /** @type {(why: string) => never} */
   const fail = (why) => { throw new Error(why); };
 
+  /** @returns {TaskFilter} */
   const primary = () => {
     const tok = peek();
     if (!tok) fail("expression ended unexpectedly");
@@ -1220,6 +1526,7 @@ function parseBooleanTokens(tokens, delim, today) {
     pos++;
     return compileBooleanText(tok.text, delim, today);
   };
+  /** @returns {TaskFilter} */
   const notExpr = () => {
     const tok = peek();
     if (tok && tok.type === "op" && tok.op === "NOT") {
@@ -1229,6 +1536,11 @@ function parseBooleanTokens(tokens, delim, today) {
     }
     return primary();
   };
+  /**
+   * @param {() => TaskFilter} nextLevel
+   * @param {string[]} ops
+   * @returns {TaskFilter}
+   */
   const binary = (nextLevel, ops) => {
     let left = nextLevel();
     for (; ; ) {
@@ -1238,6 +1550,7 @@ function parseBooleanTokens(tokens, delim, today) {
       const negated = tok.op.endsWith(" NOT");
       const base = tok.op.split(" ")[0];
       const rightRaw = nextLevel();
+      /** @type {TaskFilter} */
       const right = negated ? (t, c) => !rightRaw(t, c) : rightRaw;
       const l = left;
       if (base === "XOR") left = (t, c) => l(t, c) !== right(t, c);
@@ -1254,7 +1567,11 @@ function parseBooleanTokens(tokens, delim, today) {
   return fn;
 }
 /** Compile the inside of a delimiter pair: either a nested boolean expression or a leaf
- * filter. Throws on anything unsupported so the caller can report the whole line. */
+ * filter. Throws on anything unsupported so the caller can report the whole line.
+ * @param {string} text
+ * @param {string[]} delim
+ * @param {string} today
+ * @returns {TaskFilter} */
 function compileBooleanText(text, delim, today) {
   const tokens = tokenizeBoolean(text, delim[0], delim[1]);
   if (tokens) return parseBooleanTokens(tokens, delim, today);
@@ -1265,7 +1582,10 @@ function compileBooleanText(text, delim, today) {
   return leaf;
 }
 /** Parse a whole boolean line. Returns a predicate, or null if it cannot be parsed with
- * any single delimiter type. */
+ * any single delimiter type.
+ * @param {string} raw
+ * @param {string} today
+ * @returns {{ fn?: TaskFilter, error?: string }} */
 function compileBooleanLine(raw, today) {
   let firstReason = null;
   let sawDelimiter = false;
@@ -1294,7 +1614,9 @@ function compileBooleanLine(raw, today) {
 /** Parse query text into predicates. One instruction per line (joined across trailing
  * backslashes); blank lines and `#` comments are skipped. Lines are combined with an
  * implicit AND, exactly as a Tasks query block does. Unrecognised lines become errors —
- * never silently dropped. */
+ * never silently dropped.
+ * @param {string} text
+ * @param {string} today */
 function parseTasksQuery(text, today) {
   const filters = [];
   const errors = [];
@@ -1325,9 +1647,13 @@ function parseTasksQuery(text, today) {
   return { filters, errors, limit, excludeSubitems };
 }
 
-/** Run a parsed query over a task list. Returns matches in vault order plus any errors. */
+/** Run a parsed query over a task list. Returns matches in vault order plus any errors.
+ * @param {TasksTask[]} tasks
+ * @param {string} queryText
+ * @param {string} today */
 function runTasksQuery(tasks, queryText, today) {
   const parsed = parseTasksQuery(queryText, today);
+  /** @type {Map<string, TasksTask[]>} */
   const byId = /* @__PURE__ */ new Map();
   for (const t of tasks) {
     if (!t.id) continue;
@@ -1356,7 +1682,10 @@ function runTasksQuery(tasks, queryText, today) {
  * Returns `predicted` unchanged when the text already matches, or when the text cannot be
  * found at all — falling back to the old behaviour rather than guessing. With several
  * identical lines, the one nearest the prediction wins, which is what keeps a review of a
- * file full of repeated task text on the right one. */
+ * file full of repeated task text on the right one.
+ * @param {string[]} lines
+ * @param {number} predicted
+ * @param {string} expected */
 function reanchorLine(lines, predicted, expected) {
   if (expected === void 0 || expected === null) return predicted;
   const want = String(expected).trim();
@@ -1369,14 +1698,20 @@ function reanchorLine(lines, predicted, expected) {
   }
   return best >= 0 ? best : predicted;
 }
+/**
+ * @param {Map<string, number>} live
+ * @param {Map<string, number>} snapshot
+ */
 function restoreOffsets(live, snapshot) {
   live.clear();
   for (const [k, v] of snapshot) live.set(k, v);
 }
+/** @param {TasksTask} task */
 function taskLineNumber(task) {
   var _a, _b;
   return (_b = (_a = task.taskLocation) == null ? void 0 : _a.lineNumber) != null ? _b : 0;
 }
+/** @param {TasksTask} task */
 function taskPath(task) {
   var _a, _b;
   return (_b = (_a = task.taskLocation) == null ? void 0 : _a.path) != null ? _b : "";
@@ -1402,12 +1737,20 @@ var COMPLETED_STATUSES = /* @__PURE__ */ new Set(["x", "X", "-"]);
  *    still warming returns a partial list, so collect() waits for Warm, and line numbers
  *    are re-read from the file rather than trusted from the cache. */
 var TasksQueryTaskSource = class {
+  /**
+   * @param {PluginApp} app
+   * @param {TasksApiAdapter} tasksApi
+   * @param {string} queryText
+   * @param {string} projectTag
+   * @param {boolean} [hideTickled]
+   */
   constructor(app, tasksApi, queryText, projectTag, hideTickled = false) {
     this.app = app;
     this.tasksApi = tasksApi;
     this.queryText = queryText;
     this.projectTag = projectTag;
     this.hideTickled = hideTickled;
+    /** @type {string[]} */
     this.errors = [];
   }
   async collect() {
@@ -1425,6 +1768,7 @@ var TasksQueryTaskSource = class {
     if (result.errors.length) return [];
 
     // Group by file so each file is read once, and so subtree ends can be computed.
+    /** @type {Map<string, TasksTask[]>} */
     const byPath = /* @__PURE__ */ new Map();
     for (const t of result.tasks) {
       const path = taskPath(t);
@@ -1432,6 +1776,7 @@ var TasksQueryTaskSource = class {
       if (!byPath.has(path)) byPath.set(path, []);
       byPath.get(path).push(t);
     }
+    /** @type {ReviewItem[]} */
     const items = [];
     for (const [path, group] of byPath) {
       const file = this.app.vault.getAbstractFileByPath(path);
@@ -1472,7 +1817,9 @@ var TasksQueryTaskSource = class {
   }
   /** Tasks' cache starts Cold and fills asynchronously; querying too early silently
    * returns a short list. Bounded, so a cache that never warms degrades to whatever is
-   * available rather than hanging the review. */
+   * available rather than hanging the review.
+   * @param {TasksPlugin} plugin
+   * @param {number} [timeoutMs] */
   async waitForWarmCache(plugin, timeoutMs = 3e3) {
     if (typeof plugin.getState !== "function") return;
     const deadline = Date.now() + timeoutMs;
@@ -1492,7 +1839,9 @@ function todayString() {
   }
   return (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
 }
-/** "Folder/Note > Heading" for a task, or just the note when it sits under no heading. */
+/** "Folder/Note > Heading" for a task, or just the note when it sits under no heading.
+ * @param {TasksTask} task
+ * @param {string} path */
 function taskSourceLabel(task, path) {
   var _a, _b;
   const note = String(path).replace(/\.md$/i, "");
@@ -1500,24 +1849,34 @@ function taskSourceLabel(task, path) {
   return heading ? `${note} \u203A ${heading}` : note;
 }
 /** Does a query filter on start dates itself? If so it is asking about deferred tasks,
- * and silently dropping them would contradict what was asked for. */
+ * and silently dropping them would contradict what was asked for.
+ * @param {string} text */
 function queryMentionsStartDates(text) {
   // A filter begins a line or follows an opening delimiter — never mid-phrase. Matching
   // after any space made a tag literally named "starts" count as a start-date filter.
   return /(^|[([{"\u201C])\s*(starts|has start|no start|not start)\b/im.test(String(text || ""));
 }
+/** @param {TasksTask} task */
 function statusSymbolOf(task) {
   var _a, _b, _c;
   return (_c = (_b = (_a = task.status) == null ? void 0 : _a.symbol) != null ? _b : task.statusCharacter) != null ? _c : " ";
 }
 /** Compare a file line against the markdown Tasks recorded for it, ignoring indentation
  * and trailing whitespace. Exact equality is too strict — Tasks stores the line without
- * the leading indent in some versions. */
+ * the leading indent in some versions.
+ * @param {string} fileLine
+ * @param {string} taskMarkdown */
 function linesLookLikeSameTask(fileLine, taskMarkdown) {
   if (!taskMarkdown) return true;
   return fileLine.trim() === String(taskMarkdown).trim();
 }
 var ActiveFileTopLevelTaskSource = class {
+  /**
+   * @param {PluginApp} app
+   * @param {obsidian.TFile} file
+   * @param {string} projectTag
+   * @param {boolean} [hideTickled]
+   */
   constructor(app, file, projectTag, hideTickled = false) {
     this.app = app;
     this.file = file;
@@ -1529,6 +1888,7 @@ var ActiveFileTopLevelTaskSource = class {
     const cache = this.app.metadataCache.getFileCache(this.file);
     const content = await this.app.vault.cachedRead(this.file);
     const lines = content.split("\n");
+    /** @type {ReviewItem[]} */
     const items = [];
     const listItems = ((_a = cache == null ? void 0 : cache.listItems) != null ? _a : []).slice().sort((a, b) => a.position.start.line - b.position.start.line);
     /* A task's block is measured by indentation (computeSubtreeEnd), but "top-level" comes
@@ -1576,7 +1936,9 @@ var ActiveFileTopLevelTaskSource = class {
  * Walks by indentation rather than following Tasks' parent links, so the chain reflects
  * the file as it is now, including any edits made earlier in this review. Blank lines are
  * skipped; a shallower non-task line (a bullet, say) is still a legitimate ancestor and
- * is included, because it is part of where the task lives. */
+ * is included, because it is part of where the task lives.
+ * @param {string[]} lines
+ * @param {number} startLine */
 function computeAncestorLines(lines, startLine) {
   var _a;
   const out = [];
@@ -1592,6 +1954,10 @@ function computeAncestorLines(lines, startLine) {
   }
   return out;
 }
+/**
+ * @param {string[]} lines
+ * @param {number} startLine
+ */
 function computeSubtreeEnd(lines, startLine) {
   var _a, _b;
   const baseIndent = indentOf((_a = lines[startLine]) != null ? _a : "");
@@ -1611,16 +1977,22 @@ function computeSubtreeEnd(lines, startLine) {
   while (end > startLine && ((_b = lines[end]) != null ? _b : "").trim() === "") end--;
   return end;
 }
+/** @param {string} line */
 function indentOf(line) {
   const m = line.match(/^[\t ]*/);
   if (!m) return 0;
   return m[0].replace(/\t/g, "    ").length;
 }
+/**
+ * @param {string} line
+ * @param {string} tag
+ */
 function lineHasTag(line, tag) {
   if (!tag) return false;
   const re = new RegExp(`(^|\\s)#${escapeRegExp(tag)}(\\b|$)`);
   return re.test(line);
 }
+/** @param {string} s */
 function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -1655,7 +2027,8 @@ var TASKS_SIGNIFIERS = [
 ];
 var PRIORITY_SIGNIFIERS = ["\u{1F53A}", "⏫", "\u{1F53C}", "\u{1F53D}", "⏬"];
 /** Where a task's own words end: at the first Tasks field, or at a block id (`^abc`) that
- * ends the line, so nothing is ever written after a block id and its links keep working. */
+ * ends the line, so nothing is ever written after a block id and its links keep working.
+ * @param {string} line */
 function descriptionEnd(line) {
   let cut = line.length;
   for (const sig of TASKS_SIGNIFIERS) {
@@ -1667,7 +2040,9 @@ function descriptionEnd(line) {
   return cut;
 }
 /** True if the line carries exactly this tag. Obsidian matches tags without regard to case,
- * and #home is not #homework or #home/kitchen. */
+ * and #home is not #homework or #home/kitchen.
+ * @param {string} line
+ * @param {string} tag */
 function hasExactTag(line, tag) {
   const name = String(tag || "").trim().replace(/^#/, "");
   if (!name) return false;
@@ -1676,9 +2051,12 @@ function hasExactTag(line, tag) {
 /** The labels at the end of a task's words, lower-cased: tags, and any word in `known`.
  * Organise writes labels there, so a plain-text label only counts as present in that run —
  * "long" in "Write a long letter" is part of the wording, not a duration. The first word
- * is never a label: it is the task. */
+ * is never a label: it is the task.
+ * @param {string} line
+ * @param {Set<string>} known */
 function trailingLabels(line, known) {
   const words = line.slice(0, descriptionEnd(line)).replace(/^\s*[-*+]\s+\[.\]\s*/, "").trim().split(/\s+/).filter(Boolean);
+  /** @type {Set<string>} */
   const run = new Set();
   for (let i = words.length - 1; i >= 1; i--) {
     const w = words[i].toLowerCase();
@@ -1688,7 +2066,10 @@ function trailingLabels(line, known) {
   return run;
 }
 /** True if the line already has one of this dimension's labels — Organise then does not
- * ask, rather than adding a second context next to the first (or the same one twice). */
+ * ask, rather than adding a second context next to the first (or the same one twice).
+ * @param {Dimension} dim
+ * @param {string} line
+ * @param {Set<string>} run */
 function dimensionAlreadySet(dim, line, run) {
   return (dim.values || []).some((v) => {
     var _a;
@@ -1698,8 +2079,10 @@ function dimensionAlreadySet(dim, line, run) {
     return value.toLowerCase().split(/\s+/).every((w) => run.has(w));
   });
 }
-/** Every word of every plain-text label, so trailingLabels can tell labels from wording. */
+/** Every word of every plain-text label, so trailingLabels can tell labels from wording.
+ * @param {Dimension[]} dimensions */
 function textLabelWords(dimensions) {
+  /** @type {Set<string>} */
   const words = new Set();
   for (const dim of dimensions || []) {
     for (const v of dim.values || []) {
@@ -1710,6 +2093,10 @@ function textLabelWords(dimensions) {
   }
   return words;
 }
+/**
+ * @param {string} line
+ * @param {string[]} tokens
+ */
 function insertBeforeTasksMetadata(line, tokens) {
   // A tag the line already has is not written again: "#home #home" helps no filter.
   tokens = tokens.filter((t) => !(String(t).startsWith("#") && hasExactTag(line, t)));
@@ -1720,23 +2107,42 @@ function insertBeforeTasksMetadata(line, tokens) {
   const tail = line.slice(cut);
   return `${head}${insertion}${tail ? " " + tail.replace(/^\s+/, "") : ""}`;
 }
+/**
+ * @param {string} value
+ * @param {string} format
+ */
 function formatToken(value, format) {
   return format === "tag" ? `#${value}` : value;
 }
+/** @param {PluginApp} app */
 function getIndentUnit(app) {
-  var _a, _b;
   const v = app.vault;
-  const useTab = (_a = v.getConfig) == null ? void 0 : _a.call(v, "useTab");
-  const tabSize = (_b = v.getConfig) == null ? void 0 : _b.call(v, "tabSize");
+  const useTab = v.getConfig?.("useTab");
+  const tabSize = v.getConfig?.("tabSize");
   return useTab ? "	" : " ".repeat(typeof tabSize === "number" && tabSize > 0 ? tabSize : 4);
 }
+/**
+ * @param {PluginApp} app
+ * @param {obsidian.TFile} file
+ * @param {number} line
+ */
 async function readLine(app, file, line) {
   const lines = (await app.vault.read(file)).split("\n");
   return line >= 0 && line < lines.length ? lines[line] : null;
 }
+/**
+ * @param {PluginApp} app
+ * @param {obsidian.TFile} file
+ */
 async function lineCount(app, file) {
   return (await app.vault.read(file)).split("\n").length;
 }
+/**
+ * @param {PluginApp} app
+ * @param {obsidian.TFile} file
+ * @param {number} line
+ * @param {string} newText
+ */
 async function replaceLine(app, file, line, newText) {
   await app.vault.process(file, (data) => {
     const lines = data.split("\n");
@@ -1745,6 +2151,12 @@ async function replaceLine(app, file, line, newText) {
     return lines.join("\n");
   });
 }
+/**
+ * @param {PluginApp} app
+ * @param {obsidian.TFile} file
+ * @param {number} afterLine
+ * @param {string} text
+ */
 async function insertLineAfter(app, file, afterLine, text) {
   let at = afterLine + 1;
   await app.vault.process(file, (data) => {
@@ -1755,6 +2167,13 @@ async function insertLineAfter(app, file, afterLine, text) {
   });
   return at;
 }
+/**
+ * @param {PluginApp} app
+ * @param {obsidian.TFile} file
+ * @param {number} startLine
+ * @param {number} endLine
+ * @param {string} indent
+ */
 async function indentRange(app, file, startLine, endLine, indent) {
   await app.vault.process(file, (data) => {
     const lines = data.split("\n");
@@ -1764,6 +2183,12 @@ async function indentRange(app, file, startLine, endLine, indent) {
     return lines.join("\n");
   });
 }
+/**
+ * @param {PluginApp} app
+ * @param {obsidian.TFile} file
+ * @param {number} startLine
+ * @param {number} endLine
+ */
 async function getChildTaskLines(app, file, startLine, endLine) {
   const lines = (await app.vault.read(file)).split("\n");
   const out = [];
@@ -1773,6 +2198,11 @@ async function getChildTaskLines(app, file, startLine, endLine) {
   }
   return out;
 }
+/**
+ * @param {PluginApp} app
+ * @param {string} path
+ * @param {string} block
+ */
 async function appendToNote(app, path, block) {
   const file = await ensureNote(app, path);
   await app.vault.process(file, (data) => {
@@ -1781,6 +2211,12 @@ async function appendToNote(app, path, block) {
 `;
   });
 }
+/**
+ * @param {PluginApp} app
+ * @param {string} path
+ * @param {string} block
+ * @param {string} placeholder
+ */
 async function insertBlockAtPlaceholder(app, path, block, placeholder) {
   const token = placeholder.trim();
   if (!token) {
@@ -1805,7 +2241,12 @@ async function insertBlockAtPlaceholder(app, path, block, placeholder) {
  *
  * Excludes the task itself and everything inside its own subtree — a task cannot become a
  * child of its own descendant — and completed projects, which are not somewhere to file
- * new work. */
+ * new work.
+ * @param {PluginApp} app
+ * @param {obsidian.TFile} file
+ * @param {string} projectTag
+ * @param {number} excludeStart
+ * @param {number} excludeEnd */
 async function findProjectLines(app, file, projectTag, excludeStart, excludeEnd) {
   const lines = (await app.vault.read(file)).split("\n");
   const out = [];
@@ -1818,6 +2259,7 @@ async function findProjectLines(app, file, projectTag, excludeStart, excludeEnd)
   }
   return out;
 }
+/** @param {string} raw */
 function projectPickerLabel(raw) {
   const text = deTaskLine(raw).trim().replace(/\s+/g, " ");
   return text.length > 60 ? text.slice(0, 59) + "\u2026" : text;
@@ -1825,7 +2267,10 @@ function projectPickerLabel(raw) {
 /** Open projects in every note but `excludePath`: { file, line, raw, label }.
  *
  * Found from Obsidian's index of tags, so only notes that have the project tag are read.
- * A note the index hasn't reached yet is read and checked line by line instead. */
+ * A note the index hasn't reached yet is read and checked line by line instead.
+ * @param {PluginApp} app
+ * @param {string} projectTag
+ * @param {string} excludePath */
 async function findProjectsElsewhere(app, projectTag, excludePath) {
   const want = `#${String(projectTag || "").replace(/^#/, "")}`.toLowerCase();
   const out = [];
@@ -1858,7 +2303,13 @@ async function findProjectsElsewhere(app, projectTag, excludePath) {
  * The project is found again by its text first — the note may have changed since the list
  * was made — and nothing is written if it has gone. The step is added before it is removed
  * from where it was, so a failure part-way leaves a copy rather than nothing. Returns the
- * step's line in the project's note, or -1. */
+ * step's line in the project's note, or -1.
+ * @param {PluginApp} app
+ * @param {obsidian.TFile} source
+ * @param {number} startLine
+ * @param {number} endLine
+ * @param {ProjectRef} project
+ * @param {string} indentUnit */
 async function moveSubtreeToProjectIn(app, source, startLine, endLine, project, indentUnit) {
   const block = (await app.vault.read(source)).split("\n").slice(startLine, endLine + 1);
   if (!block.length) return -1;
@@ -1888,7 +2339,10 @@ async function moveSubtreeToProjectIn(app, source, startLine, endLine, project, 
 /** Which project a step belongs to. This note's projects are listed by name; projects in
  * other notes are found with a search, each shown with the note it is in, so the two are
  * never mixed up. Returns "__new__", the line of a project in this note, or "__filed__"
- * once a step has been filed in another note. */
+ * once a step has been filed in another note.
+ * @param {Ctx} ctx
+ * @param {ReviewItem} item
+ * @param {ProjectRef[]} existingProjects */
 async function chooseStepProject(ctx, item, existingProjects) {
   const { prompter } = ctx;
   const here = ctx.sourceKind === "query" ? `In ${item.file.basename}` : "In this note";
@@ -1917,7 +2371,10 @@ async function chooseStepProject(ctx, item, existingProjects) {
  *
  * Labelled now because nothing later will reach it: Organise on this note no longer has
  * it, and the project it joined is already organised. It has left this review, as a task
- * sent to Someday has. */
+ * sent to Someday has.
+ * @param {Ctx} ctx
+ * @param {ReviewItem} item
+ * @param {ProjectRef} project */
 async function fileStepElsewhere(ctx, item, project) {
   const moved = await moveSubtreeToProjectIn(ctx.app, item.file, item.startLine, item.endLine, project, getIndentUnit(ctx.app));
   if (moved < 0) return false;
@@ -1927,9 +2384,10 @@ async function fileStepElsewhere(ctx, item, project) {
   const at = locateByText(lines, project.line, project.raw);
   const where = { file: project.file, raw: at >= 0 ? lines[at] : project.raw };
   item.movedElsewhere = { file: project.file, line: moved, raw: lines[moved] };
+  /** @param {string} raw */
   const show = (raw) => {
     if (ctx.prompter.highlightInSource) {
-      ctx.prompter.highlightInSource({
+      void ctx.prompter.highlightInSource({
         file: project.file, startLine: moved, endLine: moved, raw, parentRaw: where.raw,
         sourceLabel: project.file.basename
       });
@@ -1962,7 +2420,13 @@ async function fileStepElsewhere(ctx, item, project) {
  * ordering hazard entirely.
  *
  * Relative nesting within the moved block is preserved: each line keeps its depth
- * relative to the block's root, which is re-based to one indent under the project. */
+ * relative to the block's root, which is re-based to one indent under the project.
+ * @param {PluginApp} app
+ * @param {obsidian.TFile} file
+ * @param {number} startLine
+ * @param {number} endLine
+ * @param {number} projectLine
+ * @param {string} indentUnit */
 async function moveSubtreeUnderProject(app, file, startLine, endLine, projectLine, indentUnit) {
   let newStart = startLine;
   await app.vault.process(file, (data) => {
@@ -1993,7 +2457,9 @@ async function moveSubtreeUnderProject(app, file, startLine, endLine, projectLin
 var HEADING_RE = /^ {0,3}(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/;
 /** Every heading in `lines`: { line, level, text, path }, where `path` is the heading with
  * the ones it sits under ("Work \u203A Calls"), so two headings of the same name can be
- * told apart. */
+ * told apart.
+ * @param {string[]} lines
+ * @returns {Heading[]} */
 function noteHeadings(lines) {
   const out = [];
   const stack = [];
@@ -2022,7 +2488,9 @@ function noteHeadings(lines) {
   }
   return out;
 }
-/** The heading a line currently sits under, or null if it is above the first one. */
+/** The heading a line currently sits under, or null if it is above the first one.
+ * @param {Heading[]} headings
+ * @param {number} line */
 function headingAbove(headings, line) {
   let found = null;
   for (const h of headings) {
@@ -2041,7 +2509,12 @@ function headingAbove(headings, line) {
  * One read-modify-write, for the same reason as moving under a project: removing the block
  * shifts everything below it, so the heading is found again inside the modified copy. The
  * block is re-based to the left margin, keeping its own nesting. Returns the new start line,
- * or -1 if the heading is no longer where it was, in which case nothing is written. */
+ * or -1 if the heading is no longer where it was, in which case nothing is written.
+ * @param {PluginApp} app
+ * @param {obsidian.TFile} file
+ * @param {number} startLine
+ * @param {number} endLine
+ * @param {number} headingLine */
 async function moveSubtreeUnderHeading(app, file, startLine, endLine, headingLine) {
   let newStart = -1;
   await app.vault.process(file, (data) => {
@@ -2066,6 +2539,14 @@ async function moveSubtreeUnderHeading(app, file, startLine, endLine, headingLin
   });
   return newStart;
 }
+/**
+ * @param {PluginApp} app
+ * @param {obsidian.TFile} source
+ * @param {number} startLine
+ * @param {number} endLine
+ * @param {string} targetPath
+ * @param {string} [placeholder]
+ */
 async function moveSubtree(app, source, startLine, endLine, targetPath, placeholder) {
   const lines = (await app.vault.read(source)).split("\n");
   const block = lines.slice(startLine, endLine + 1).join("\n");
@@ -2083,12 +2564,20 @@ async function moveSubtree(app, source, startLine, endLine, targetPath, placehol
   return usedPlaceholder;
 }
 /** Rewrite the status character of a task line, preserving indentation, list marker and
- * everything after the checkbox. Returns null if the line is not a task. */
+ * everything after the checkbox. Returns null if the line is not a task.
+ * @param {string} line
+ * @param {string} symbol */
 function setTaskStatus(line, symbol) {
   const m = line.match(/^(\s*(?:[-*+]|\d+[.)])\s+\[)(.)(\]\s?)([\s\S]*)$/);
   if (!m) return null;
   return `${m[1]}${symbol}${m[3]}${m[4]}`;
 }
+/**
+ * @param {PluginApp} app
+ * @param {obsidian.TFile} file
+ * @param {number} startLine
+ * @param {number} endLine
+ */
 async function removeSubtree(app, file, startLine, endLine) {
   await app.vault.process(file, (data) => {
     const lines = data.split("\n");
@@ -2096,6 +2585,13 @@ async function removeSubtree(app, file, startLine, endLine) {
     return lines.join("\n");
   });
 }
+/**
+ * @param {PluginApp} app
+ * @param {string} folder
+ * @param {string} name
+ * @param {string} templatePath
+ * @param {string} fallbackBody
+ */
 async function createNoteFromTemplate(app, folder, name, templatePath, fallbackBody) {
   const cleanName = name.replace(/[\\/:*?"<>|]/g, "").trim() || "Untitled";
   const dir = (0, obsidian.normalizePath)(folder || "");
@@ -2112,6 +2608,10 @@ async function createNoteFromTemplate(app, folder, name, templatePath, fallbackB
   const path = (0, obsidian.normalizePath)(dir ? `${dir}/${cleanName}.md` : `${cleanName}.md`);
   return app.vault.create(path, body);
 }
+/**
+ * @param {PluginApp} app
+ * @param {string} path
+ */
 async function ensureNote(app, path) {
   const p = (0, obsidian.normalizePath)(path);
   const existing = app.vault.getAbstractFileByPath(p);
@@ -2125,6 +2625,7 @@ async function ensureNote(app, path) {
   }
   return app.vault.create(p, "");
 }
+/** @param {string} line */
 function deTaskLine(line) {
   const text = line.replace(/^\s*[-*+]\s+\[.\]\s+/, "");
   let cut = text.length;
@@ -2140,38 +2641,49 @@ function deTaskLine(line) {
 // ----------------------------------------------------------------------
 var TEMPLATER_ID = "templater-obsidian";
 var CORE_TEMPLATES_ID = "templates";
+/** @param {PluginApp} app */
 function templaterInstance(app) {
   var _a, _b, _c;
-  return (_c = (_b = (_a = app.plugins) == null ? void 0 : _a.plugins) == null ? void 0 : _b[TEMPLATER_ID]) == null ? void 0 : _c.templater;
+  return (_c = /** @type {TemplaterPlugin | undefined} */ ((_b = (_a = app.plugins) == null ? void 0 : _a.plugins) == null ? void 0 : _b[TEMPLATER_ID])) == null ? void 0 : _c.templater;
 }
+/** @param {PluginApp} app */
 function templaterEnabled(app) {
-  var _a;
-  return typeof ((_a = templaterInstance(app)) == null ? void 0 : _a.create_new_note_from_template) === "function";
+  return typeof templaterInstance(app)?.create_new_note_from_template === "function";
 }
+/** @param {PluginApp} app */
 function coreTemplates(app) {
-  var _a, _b, _c;
   const ip = app.internalPlugins;
-  return (_c = (_a = ip == null ? void 0 : ip.getPluginById) == null ? void 0 : _a.call(ip, CORE_TEMPLATES_ID)) != null ? _c : (_b = ip == null ? void 0 : ip.plugins) == null ? void 0 : _b[CORE_TEMPLATES_ID];
+  return ip?.getPluginById?.(CORE_TEMPLATES_ID) ?? ip?.plugins?.[CORE_TEMPLATES_ID];
 }
+/** @param {PluginApp} app */
 function coreTemplatesEnabled(app) {
   var _a;
   const p = coreTemplates(app);
   return !!(p && ((_a = p.enabled) != null ? _a : true) && p.instance);
 }
+/** @param {PluginApp} app */
 function coreTemplatesOptions(app) {
   var _a, _b, _c;
   return (_c = (_b = (_a = coreTemplates(app)) == null ? void 0 : _a.instance) == null ? void 0 : _b.options) != null ? _c : {};
 }
+/**
+ * @param {PluginApp} app
+ * @param {Settings} settings
+ */
 function getTemplateFolder(app, settings) {
   var _a, _b, _c, _d, _e;
   const override = (_a = settings.templateFolder) == null ? void 0 : _a.trim();
   if (override) return (0, obsidian.normalizePath)(override);
-  const templaterFolder = (_e = (_d = (_c = (_b = app.plugins) == null ? void 0 : _b.plugins) == null ? void 0 : _c[TEMPLATER_ID]) == null ? void 0 : _d.settings) == null ? void 0 : _e.templates_folder;
+  const templaterFolder = (_e = (_d = /** @type {TemplaterPlugin | undefined} */ ((_c = (_b = app.plugins) == null ? void 0 : _b.plugins) == null ? void 0 : _c[TEMPLATER_ID])) == null ? void 0 : _d.settings) == null ? void 0 : _e.templates_folder;
   if (templaterFolder && String(templaterFolder).trim()) return (0, obsidian.normalizePath)(String(templaterFolder).trim());
   const coreFolder = coreTemplatesOptions(app).folder;
   if (coreFolder && String(coreFolder).trim()) return (0, obsidian.normalizePath)(String(coreFolder).trim());
   return null;
 }
+/**
+ * @param {PluginApp} app
+ * @param {Settings} settings
+ */
 function getTemplateFiles(app, settings) {
   const folder = getTemplateFolder(app, settings);
   const all = app.vault.getMarkdownFiles();
@@ -2180,6 +2692,10 @@ function getTemplateFiles(app, settings) {
   const scoped = all.filter((f) => f.path === folder || f.path.startsWith(prefix));
   return scoped.length ? scoped : all;
 }
+/**
+ * @param {PluginApp} app
+ * @param {string} engine
+ */
 function resolveEngine(app, engine) {
   switch (engine) {
     case "templater":
@@ -2195,6 +2711,11 @@ function resolveEngine(app, engine) {
       return "copy";
   }
 }
+/**
+ * @param {PluginApp} app
+ * @param {string} kind
+ * @param {string} explicit
+ */
 function formatNow(app, kind, explicit) {
   const opts = coreTemplatesOptions(app);
   const fallback = kind === "date" ? "YYYY-MM-DD" : "HH:mm";
@@ -2205,27 +2726,47 @@ function formatNow(app, kind, explicit) {
     return (0, obsidian.moment)().format(fallback);
   }
 }
+/**
+ * @param {PluginApp} app
+ * @param {string} content
+ * @param {string} title
+ */
 function applyCoreTemplateSyntax(app, content, title) {
-  return content.replace(/{{\s*title\s*}}/gi, title).replace(/{{\s*date\s*(?::\s*([^}]+?))?\s*}}/gi, (_m, f) => formatNow(app, "date", (f != null ? f : "").trim())).replace(/{{\s*time\s*(?::\s*([^}]+?))?\s*}}/gi, (_m, f) => formatNow(app, "time", (f != null ? f : "").trim()));
+  return content.replace(/{{\s*title\s*}}/gi, title).replace(/{{\s*date\s*(?::\s*([^}]+?))?\s*}}/gi, (/** @type {string} */ _m, /** @type {string | undefined} */ f) => formatNow(app, "date", (f != null ? f : "").trim())).replace(/{{\s*time\s*(?::\s*([^}]+?))?\s*}}/gi, (/** @type {string} */ _m, /** @type {string | undefined} */ f) => formatNow(app, "time", (f != null ? f : "").trim()));
 }
+/** @param {string} name */
 function sanitizeName(name) {
   return name.replace(/[\\/:*?"<>|]/g, "").trim() || "Untitled";
 }
+/**
+ * @param {PluginApp} app
+ * @param {string} dir
+ */
 async function ensureFolder(app, dir) {
   const d = (0, obsidian.normalizePath)(dir || "");
   if (d && !app.vault.getAbstractFileByPath(d)) {
     await app.vault.createFolder(d).catch(() => void 0);
   }
 }
+/**
+ * @param {PluginApp} app
+ * @param {string} dir
+ * @param {string} rawName
+ */
 function uniquePath(app, dir, rawName) {
   const folder = (0, obsidian.normalizePath)(dir || "");
   const base = sanitizeName(rawName);
+  /** @param {string} n */
   const make = (n) => (0, obsidian.normalizePath)(folder ? `${folder}/${n}.md` : `${n}.md`);
   let name = base;
   let i = 1;
   while (app.vault.getAbstractFileByPath(make(name))) name = `${base} ${++i}`;
   return make(name);
 }
+/**
+ * @param {PluginApp} app
+ * @param {string} basename
+ */
 function newestMarkdownWithBasename(app, basename) {
   const matches = app.vault.getMarkdownFiles().filter((f) => f.basename === basename);
   if (!matches.length) return null;
@@ -2234,6 +2775,11 @@ function newestMarkdownWithBasename(app, basename) {
     return ((_b = (_a = b.stat) == null ? void 0 : _a.mtime) != null ? _b : 0) - ((_d = (_c = a.stat) == null ? void 0 : _c.mtime) != null ? _d : 0);
   })[0];
 }
+/**
+ * @param {PluginApp} app
+ * @param {Settings} settings
+ * @param {TemplateRequest} opts
+ */
 async function runTemplateIntoNote(app, settings, opts) {
   const engine = resolveEngine(app, settings.templateEngine);
   await ensureFolder(app, opts.folder);
@@ -2246,10 +2792,14 @@ async function runTemplateIntoNote(app, settings, opts) {
   const path = uniquePath(app, opts.folder, opts.name);
   return app.vault.create(path, body);
 }
+/**
+ * @param {PluginApp} app
+ * @param {TemplateRequest} opts
+ */
 async function tryTemplater(app, opts) {
   var _a;
   const tp = templaterInstance(app);
-  if (typeof (tp == null ? void 0 : tp.create_new_note_from_template) !== "function") return null;
+  if (typeof tp?.create_new_note_from_template !== "function") return null;
   const clean = sanitizeName(opts.name);
   const folderArg = opts.folder ? (_a = app.vault.getAbstractFileByPath((0, obsidian.normalizePath)(opts.folder))) != null ? _a : app.vault.getRoot() : app.vault.getRoot();
   try {
@@ -2288,13 +2838,23 @@ var PRIORITY_OPTIONS = [
  *
  * Every await on the Tasks API goes through here. Anything that opens a window we do not
  * control is somewhere the review can get stuck, and the fix has to be applied at all of
- * them or the lockup just moves. */
+ * them or the lockup just moves.
+ * @template T
+ * @param {Ctx} ctx
+ * @param {Promise<T>} promise
+ * @returns {Promise<T>} */
 function awaitTasksModal(ctx, promise) {
   const { prompter } = ctx;
   return prompter && typeof prompter.withControls === "function"
     ? prompter.withControls(promise)
     : promise;
 }
+/**
+ * @param {Ctx} ctx
+ * @param {obsidian.TFile} file
+ * @param {number} line
+ * @param {string[]} tokens
+ */
 async function editTaskLineTagged(ctx, file, line, tokens) {
   const { tasks } = ctx;
   const before = await readLine(ctx.app, file, line);
@@ -2327,7 +2887,11 @@ async function editTaskLineTagged(ctx, file, line, tokens) {
  * ReviewControl("back") reaches the review loop, which restores the undo journal before
  * re-running. That is what makes restarting safe rather than merely repetitive: whatever
  * the abandoned attempt had already written is rolled back first, so the second attempt
- * starts from the same state as the first. */
+ * starts from the same state as the first.
+ * @param {Ctx} ctx
+ * @param {obsidian.TFile} file
+ * @param {number} line
+ * @param {string[]} tokens */
 async function editTaskLineOrRestart(ctx, file, line, tokens) {
   const edited = await editTaskLineTagged(ctx, file, line, tokens);
   if (edited === null) throw new ReviewControl("retry");
@@ -2337,7 +2901,11 @@ async function editTaskLineOrRestart(ctx, file, line, tokens) {
  *
  * A change is the signal that the flush landed. If the user made no change there is
  * nothing to wait for, so this simply costs the timeout and returns the same text —
- * correct either way, just slower in that case. */
+ * correct either way, just slower in that case.
+ * @param {Ctx} ctx
+ * @param {{ file: obsidian.TFile, startLine: number }} item
+ * @param {string} before
+ * @param {number} [timeoutMs] */
 async function readLineAfterEdit(ctx, item, before, timeoutMs = 1500) {
   const deadline = Date.now() + timeoutMs;
   let latest = before;
@@ -2350,6 +2918,7 @@ async function readLineAfterEdit(ctx, item, before, timeoutMs = 1500) {
 }
 /* The three ways a task can finish without being filed somewhere.
  * `symbol` is the status character to write; null means remove the lines entirely. */
+/** @type {DisposeAction[]} */
 var DISPOSE_ACTIONS = [
   {
     value: "complete",
@@ -2374,10 +2943,12 @@ var DISPOSE_ACTIONS = [
   }
 ];
 /** Those the user has left switched on. Absent counts as on, so a settings file written
- * before these existed keeps every option rather than silently losing all three. */
+ * before these existed keeps every option rather than silently losing all three.
+ * @param {Settings} settings */
 function disposeOptions(settings) {
   return DISPOSE_ACTIONS.filter((a) => (settings == null ? void 0 : settings[a.setting]) !== false);
 }
+/** @param {string} value */
 function disposeActionFor(value) {
   return DISPOSE_ACTIONS.find((a) => a.value === value) || null;
 }
@@ -2426,12 +2997,15 @@ var FILLER_PREFIXES = [
   "todo:", "todo", "to do:", "asap", "urgent:", "urgent"
 ];
 /** Lowercased, curly apostrophes straightened, whitespace collapsed — so a phrase typed on
- * a phone ("don’t forget to") matches one typed on a desktop. */
+ * a phone ("don’t forget to") matches one typed on a desktop.
+ * @param {string} text */
 function normaliseForMatch(text) {
   return String(text || "").toLowerCase().replace(/[\u2018\u2019]/g, "'").replace(/\s+/g, " ").trim();
 }
-/** One phrase per line; blank lines and lines starting with # are ignored. */
+/** One phrase per line; blank lines and lines starting with # are ignored.
+ * @param {string} text */
 function parsePhraseList(text) {
+  /** @type {string[]} */
   const out = [];
   for (const raw of String(text || "").split(/\r?\n/)) {
     const line = raw.trim();
@@ -2459,17 +3033,21 @@ function defaultFillerText() {
     ...FILLER_PREFIXES
   ].join("\n");
 }
+/** @param {Settings} settings */
 function vaguePhrases(settings) {
   const v = settings == null ? void 0 : settings.vagueOpeners;
   return typeof v === "string" ? parsePhraseList(v) : VAGUE_OPENERS.map(normaliseForMatch);
 }
+/** @param {Settings} settings */
 function fillerPhrases(settings) {
   const v = settings == null ? void 0 : settings.fillerPrefixes;
   return typeof v === "string" ? parsePhraseList(v) : FILLER_PREFIXES.map(normaliseForMatch);
 }
 /** Remove leading filler, repeatedly: "TODO: maybe look into CRMs" -> "look into CRMs".
  * A filler only counts when a space or punctuation follows it, so "Musty smell" is not
- * read as "must" + "y smell". */
+ * read as "must" + "y smell".
+ * @param {string} text
+ * @param {string[]} fillers */
 function stripFiller(text, fillers) {
   let t = text;
   for (let guard = 0; guard < 10; guard++) {
@@ -2550,7 +3128,8 @@ var GUIDANCE = {
   chase:
     "A waiting-for with no date to check on it tends to wait forever. The date goes on as its start date, like Not yet, so it stays out of Process until then and a Tasks query can list just the ones due a chase."
 };
-/** The description of a task line, without checkbox, tags, links or Tasks metadata. */
+/** The description of a task line, without checkbox, tags, links or Tasks metadata.
+ * @param {string} line */
 function actionText(line) {
   return deTaskLine(String(line || ""))
     .replace(/\[\[[^\]]*\]\]/g, " ")
@@ -2559,7 +3138,9 @@ function actionText(line) {
     .replace(/\s+/g, " ")
     .trim();
 }
-/** Is this wording a usable next action? Returns { vague, reason }. */
+/** Is this wording a usable next action? Returns { vague, reason }.
+ * @param {string} line
+ * @param {Settings} settings */
 function assessNextAction(line, settings) {
   const original = normaliseForMatch(actionText(line));
   if (!original) return { vague: false, reason: "" };
@@ -2581,7 +3162,8 @@ function assessNextAction(line, settings) {
 var GUIDANCE_MODES = ["always", "onDemand", "off"];
 /** How tips are shown. Anything unrecognised — including a settings file written before
  * this option existed — falls back to on-demand, the least intrusive mode that still
- * keeps the tip reachable. */
+ * keeps the tip reachable.
+ * @param {Settings} settings */
 function guidanceMode(settings) {
   const v = settings == null ? void 0 : settings.guidanceDisplay;
   return GUIDANCE_MODES.includes(v) ? v : "onDemand";
@@ -2591,7 +3173,8 @@ function guidanceMode(settings) {
  * Dimensions are user-editable, so they are matched by what they ARE — id, label or group —
  * rather than by position. One renamed to "Where" still reads as context if its id is
  * unchanged. Anything unrecognised gets a general tip that is true of every dimension,
- * rather than no tip or a wrong one. */
+ * rather than no tip or a wrong one.
+ * @param {Dimension} dim */
 function dimensionGuidance(dim) {
   const text = `${dim && dim.id || ""} ${dim && dim.label || ""} ${dim && dim.group || ""}`.toLowerCase();
   if (/context|location|place|where/.test(text)) return GUIDANCE.context;
@@ -2604,6 +3187,7 @@ function dimensionGuidance(dim) {
  * A word in **double asterisks** is shown bold: the word that tells one answer from the
  * next, so a glance down the bold words is enough to choose. It lives in the wording
  * itself, so it is edited along with it, and an unpaired ** is left as typed. */
+/** @param {string} text */
 function richRuns(text) {
   const s = String(text == null ? "" : text);
   const runs = [];
@@ -2618,11 +3202,16 @@ function richRuns(text) {
   if (last < s.length) runs.push({ text: s.slice(last), bold: false });
   return runs;
 }
-/** The same text without the emphasis markers — for settings, notices and labels read aloud. */
+/** The same text without the emphasis markers — for settings, notices and labels read aloud.
+ * @param {string} text */
 function plainText(text) {
   return richRuns(text).map((r) => r.text).join("");
 }
-/** Add a `tag` element under `parent` showing `text`, with its **bold** runs in <strong>. */
+/** Add a `tag` element under `parent` showing `text`, with its **bold** runs in <strong>.
+ * @param {HTMLElement} parent
+ * @param {keyof HTMLElementTagNameMap} tag
+ * @param {string} text
+ * @param {string} [cls] */
 function appendRich(parent, tag, text, cls) {
   const runs = richRuns(text);
   if (!runs.some((r) => r.bold)) return parent.createEl(tag, cls ? { text: String(text == null ? "" : text), cls } : { text: String(text == null ? "" : text) });
@@ -2645,14 +3234,21 @@ function appendRich(parent, tag, text, cls) {
  * is waiting on a choice. Never while you are typing — in a note, a field, or a dialogue —
  * so a digit typed into your note stays in your note. */
 var MAX_NUMBER_KEYS = 9;
+/** @param {EventTarget | null} target */
 function isTypingTarget(target) {
   if (!target) return false;
-  const tag = String(target.tagName || "").toLowerCase();
+  // Usually an element; anything else lacks these and so is not somewhere you type.
+  const el = /** @type {Partial<HTMLElement>} */ (target);
+  const tag = String(el.tagName || "").toLowerCase();
   if (tag === "input" || tag === "textarea" || tag === "select") return true;
-  if (target.isContentEditable) return true;
-  return typeof target.closest === "function" && !!target.closest("[contenteditable='true'], .cm-editor");
+  if (el.isContentEditable) return true;
+  return typeof el.closest === "function" && !!el.closest("[contenteditable='true'], .cm-editor");
 }
-/** What a key press should answer, or null to let it through untouched. */
+/** What a key press should answer, or null to let it through untouched.
+ * @param {KeyboardEvent} e
+ * @param {PendingKeys | null} pending
+ * @param {Document | null} doc
+ * @returns {(() => void) | null} */
 function keyAnswer(e, pending, doc) {
   if (!pending || !e || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return null;
   if (isTypingTarget(e.target)) return null;
@@ -2661,7 +3257,8 @@ function keyAnswer(e, pending, doc) {
   if (/^[1-9]$/.test(String(e.key))) return pending.picks[Number(e.key) - 1] || null;
   return null;
 }
-/** Whether number keys are on here: the setting, and not on a phone, which has no keys. */
+/** Whether number keys are on here: the setting, and not on a phone, which has no keys.
+ * @param {Settings} settings */
 function numberKeysEnabled(settings) {
   if (settings && settings.numberKeys === false) return false;
   const platform = obsidian.Platform;
@@ -2672,7 +3269,8 @@ function numberKeysEnabled(settings) {
  * It used to be "Group \u203A Label", which says the same thing twice for most dimensions
  * ("Physical context \u203A Context"). Now the heading alone, with the label's words bold
  * in it; the label is added after it only when it says something the heading doesn't.
- * A heading written with its own **bold** is used as written. */
+ * A heading written with its own **bold** is used as written.
+ * @param {Dimension} dim */
 function dimensionQuestion(dim) {
   const group = String(dim && dim.group || "").trim();
   const label = String(dim && dim.label || "").trim();
@@ -2681,11 +3279,17 @@ function dimensionQuestion(dim) {
   if (!label) return `**${group}**`;
   const at = group.toLowerCase().indexOf(label.toLowerCase());
   if (at >= 0) return `${group.slice(0, at)}**${group.slice(at, at + label.length)}**${group.slice(at + label.length)}`;
+  /** @param {string} t */
   const words = (t) => t.toLowerCase().split(/\s+/).filter(Boolean);
   const inGroup = new Set(words(group));
   if (words(label).every((w) => inGroup.has(w))) return `**${group}**`;
   return `${group} \u203A **${label}**`;
 }
+/**
+ * @param {Ctx} ctx
+ * @param {string} question
+ * @param {string} guidance
+ */
 function guide(ctx, question, guidance) {
   const p = ctx.prompter;
   if (p && typeof p.showGuidance === "function") p.showGuidance(question, guidance);
@@ -2701,19 +3305,24 @@ function guide(ctx, question, guidance) {
  * moving the task anywhere, leaves the task where it belongs and lets it reappear in place. */
 var START_EMOJI_RE = /\u{1F6EB}\uFE0F?\s*(\d{4}-\d{2}-\d{2})/u;
 var START_DATAVIEW_RE = /\[start::\s*(\d{4}-\d{2}-\d{2})\s*\]/i;
-/** The start date written on a task line, in either emoji or Dataview form. */
+/** The start date written on a task line, in either emoji or Dataview form.
+ * @param {string} line */
 function lineStartDate(line) {
   const text = String(line || "");
   const m = text.match(START_EMOJI_RE) || text.match(START_DATAVIEW_RE);
   return m ? m[1] : null;
 }
-/** True while a task's start date is still in the future. */
+/** True while a task's start date is still in the future.
+ * @param {string} line
+ * @param {string} today */
 function isTickled(line, today) {
   const d = lineStartDate(line);
   return d !== null && d > today;
 }
 /** Set a line's start date, replacing any existing one in whichever form it uses.
- * A new date goes before a trailing block reference, which Tasks requires to stay last. */
+ * A new date goes before a trailing block reference, which Tasks requires to stay last.
+ * @param {string} line
+ * @param {string} date */
 function setLineStartDate(line, date) {
   const text = String(line || "");
   if (START_EMOJI_RE.test(text)) return text.replace(START_EMOJI_RE, `\u{1F6EB} ${date}`);
@@ -2725,6 +3334,10 @@ function setLineStartDate(line, date) {
   }
   return `${text.replace(/\s+$/, "")} \u{1F6EB} ${date}`;
 }
+/**
+ * @param {string} iso
+ * @param {number} n
+ */
 function addMonths(iso, n) {
   const [y, m, d] = iso.split("-").map(Number);
   const target = new Date(Date.UTC(y, m - 1 + n, 1));
@@ -2739,30 +3352,41 @@ function addMonths(iso, n) {
  * is reported, never guessed: the preview shows the date it has read before you accept it. */
 var WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 var MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+/** @type {Record<string, number>} */
 var NUMBER_WORDS = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12 };
+/** @type {Record<string, number>} */
 var WEEKDAY_ALIASES = { weds: 3, thur: 4, thurs: 4, tues: 2 };
+/** @param {string} iso */
 function dayOfWeek(iso) {
   return (/* @__PURE__ */ new Date(iso + "T00:00:00Z")).getUTCDay();
 }
-/** A weekday from its name or a prefix of at least three letters ("wed", "thurs"). */
+/** A weekday from its name or a prefix of at least three letters ("wed", "thurs").
+ * @param {string} word */
 function weekdayFromWord(word) {
   const w = String(word || "").toLowerCase();
   if (w in WEEKDAY_ALIASES) return WEEKDAY_ALIASES[w];
   if (w.length < 3) return -1;
   return WEEKDAY_NAMES.findIndex((d) => d.toLowerCase().startsWith(w));
 }
+/** @param {string} word */
 function monthFromWord(word) {
   const w = String(word || "").toLowerCase().replace(/\.$/, "");
   if (w.length < 3) return -1;
   if (w === "sept") return 8;
   return MONTH_NAMES.findIndex((m) => m.toLowerCase().startsWith(w));
 }
+/**
+ * @param {number} y
+ * @param {number} m
+ * @param {number} d
+ */
 function isoOf(y, m, d) {
   const last = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
   if (d < 1 || d > last) return null;
   return `${String(y).padStart(4, "0")}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
-/** "Wednesday 28 October 2026". */
+/** "Wednesday 28 October 2026".
+ * @param {string} iso */
 function formatLongDate(iso) {
   const [y, m, d] = String(iso).split("-").map(Number);
   if (!y || !m || !d) return String(iso);
@@ -2773,7 +3397,9 @@ function formatLongDate(iso) {
  * "Wednesday" (or "this Wednesday", "on Wed") is the next Wednesday after today. "Next
  * Wednesday" is the Wednesday of next week, weeks starting on Monday — so said on a Tuesday
  * it is eight days away, not one. Both readings are common; the preview settles which. A
- * day and month without a year is the next time that date comes round. */
+ * day and month without a year is the next time that date comes round.
+ * @param {string} text
+ * @param {string} today */
 function parsePlainDate(text, today) {
   const w = String(text || "").trim().toLowerCase().replace(/\s+/g, " ").replace(/[.,!]+$/, "");
   if (!w) return null;
@@ -2801,11 +3427,16 @@ function parsePlainDate(text, today) {
   if (w === "end of the month" || w === "end of month") {
     // The last day of this month, or of next month if that is today.
     const [y, mo] = today.split("-").map(Number);
+    /**
+     * @param {number} year
+     * @param {number} month
+     */
     const lastDay = (year, month) => new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
     const end = isoOf(y, mo - 1, lastDay(y, mo - 1));
     return end > today ? end : isoOf(mo === 12 ? y + 1 : y, mo % 12, lastDay(mo === 12 ? y + 1 : y, mo % 12));
   }
   const todayDow = dayOfWeek(today);
+  /** @param {number} dow */
   const fromMonday = (dow) => (dow + 6) % 7;
   if ((m = w.match(/^(this |next |on |coming |this coming )?(weekend|[a-z]+)$/))) {
     const which = (m[1] || "").trim();
@@ -2820,6 +3451,11 @@ function parsePlainDate(text, today) {
     }
   }
   const [ty] = today.split("-").map(Number);
+  /**
+   * @param {number} day
+   * @param {number} month
+   * @param {number} year
+   */
   const dated = (day, month, year) => {
     if (month < 0) return null;
     if (year) return isoOf(year, month, day);
@@ -2840,7 +3476,12 @@ function parsePlainDate(text, today) {
  * Applied to the whole subtree, because a deferred project whose next actions still show
  * on your lists has not been deferred at all. A subtask already deferred to a LATER date
  * keeps it — this only ever pushes things back, never pulls them forward. Completed
- * subtasks are left untouched. */
+ * subtasks are left untouched.
+ * @param {PluginApp} app
+ * @param {obsidian.TFile} file
+ * @param {number} startLine
+ * @param {number} endLine
+ * @param {string} date */
 async function tickleSubtree(app, file, startLine, endLine, date) {
   await app.vault.process(file, (data) => {
     const lines = data.split("\n");
@@ -2858,7 +3499,8 @@ async function tickleSubtree(app, file, startLine, endLine, date) {
  *
  * "Another date…" takes the date in words — "next Wednesday", "3 Nov" — or from a calendar,
  * with the date it has read shown before you accept it. Going back from there returns to
- * this list, not further. */
+ * this list, not further.
+ * @param {Ctx} ctx */
 async function pickTickleDate(ctx) {
   const { prompter } = ctx;
   const today = todayString();
@@ -2881,9 +3523,13 @@ async function pickTickleDate(ctx) {
   }
   return null;
 }
-/** A date after today, in words or from a calendar; null for Back. */
+/** A date after today, in words or from a calendar; null for Back.
+ * @param {Ctx} ctx
+ * @param {string} today
+ * @param {string} [question] */
 async function askForDate(ctx, today, question = "Bring it back **on**\u2026") {
   const { prompter } = ctx;
+  /** @param {string} t */
   const parse = (t) => parsePlainDate(t, today);
   if (typeof prompter.date === "function") {
     return await prompter.date(question, { after: today, parse, placeholder: "e.g. next Wednesday, 3 Nov, in 10 days" });
@@ -2904,7 +3550,12 @@ async function askForDate(ctx, today, question = "Bring it back **on**\u2026") {
  * "Send to Someday" used to copy only the task's own line and then delete its whole
  * subtree, so any subtasks, notes or links beneath it were lost. This moves all of it.
  * The re-basing matters for a task surfaced by a query from inside another task: kept at
- * its old depth, it would land in Someday looking like a child of whatever was above it. */
+ * its old depth, it would land in Someday looking like a child of whatever was above it.
+ * @param {PluginApp} app
+ * @param {obsidian.TFile} source
+ * @param {number} startLine
+ * @param {number} endLine
+ * @param {string} targetPath */
 async function moveSubtreeToNote(app, source, startLine, endLine, targetPath) {
   const lines = (await app.vault.read(source)).split("\n");
   const block = lines.slice(startLine, endLine + 1);
@@ -2931,15 +3582,24 @@ var FINISHED_DATE_FORMS = {
   done: { emoji: "\u2705", field: "completion" },
   cancelled: { emoji: "\u274C", field: "cancelled" }
 };
+/** @param {FinishedKind} kind */
 function finishedDateRes(kind) {
   const f = FINISHED_DATE_FORMS[kind];
   return [new RegExp(`${f.emoji}\uFE0F?\\s*\\d{4}-\\d{2}-\\d{2}`, "u"), new RegExp(`\\[${f.field}::\\s*\\d{4}-\\d{2}-\\d{2}\\s*\\]`, "i")];
 }
+/**
+ * @param {string} line
+ * @param {FinishedKind} kind
+ */
 function hasFinishedDate(line, kind) {
   return finishedDateRes(kind).some((re) => re.test(String(line || "")));
 }
 /** The line with its done (or cancelled) date set to `date`: replaced if it has one,
- * otherwise added at the end, before any block id, as Tasks writes it. */
+ * otherwise added at the end, before any block id, as Tasks writes it.
+ * @param {string} line
+ * @param {FinishedKind} kind
+ * @param {string} date
+ * @param {boolean} dataview */
 function setFinishedDate(line, kind, date, dataview) {
   const text = String(line || "");
   const f = FINISHED_DATE_FORMS[kind];
@@ -2952,13 +3612,20 @@ function setFinishedDate(line, kind, date, dataview) {
   return `${head} ${token}${block ? block[1] : ""}`;
 }
 /** True if Tasks would date this line: with a global filter set, only lines carrying it
- * are tasks to Tasks. */
+ * are tasks to Tasks.
+ * @param {string} line
+ * @param {TaskDateSettings} dates */
 function datedByTasks(line, dates) {
   return !dates.globalFilter || String(line || "").includes(dates.globalFilter);
 }
 /** The lines a single task line becomes once completed.
  *
- * `dates` is Tasks' date settings (see taskDateSettings); without it, no date is added. */
+ * `dates` is Tasks' date settings (see taskDateSettings); without it, no date is added.
+ * @param {TasksApiAdapter | null} tasks
+ * @param {string} line
+ * @param {string} path
+ * @param {TaskDateSettings | null} [dates]
+ * @param {string} [today] */
 function completedLines(tasks, line, path, dates = null, today = todayString()) {
   const toggled = tasks && typeof tasks.toggleTaskDone === "function" ? tasks.toggleTaskDone(line, path) : null;
   if (toggled !== null) {
@@ -2978,7 +3645,8 @@ function completedLines(tasks, line, path, dates = null, today = todayString()) 
   if (marked === null) return [line];
   return [dates && dates.doneDate && datedByTasks(marked, dates) ? setFinishedDate(marked, "done", today, dates.dataview) : marked];
 }
-/** Tasks' date settings through the adapter, or null where there is no adapter to ask. */
+/** Tasks' date settings through the adapter, or null where there is no adapter to ask.
+ * @param {Ctx} ctx */
 async function finishedDateSettings(ctx) {
   const tasks = ctx && ctx.tasks;
   return tasks && typeof tasks.taskDateSettings === "function" ? await tasks.taskDateSettings() : null;
@@ -2987,7 +3655,11 @@ async function finishedDateSettings(ctx) {
  *
  * Works from the bottom up: a recurring task expands to two lines, and doing the lower
  * lines first keeps every index above them valid. One write, so the undo journal sees a
- * single change. Already-finished tasks and non-task lines are left alone. */
+ * single change. Already-finished tasks and non-task lines are left alone.
+ * @param {Ctx} ctx
+ * @param {obsidian.TFile} file
+ * @param {number} startLine
+ * @param {number} endLine */
 async function completeSubtree(ctx, file, startLine, endLine) {
   const dates = await finishedDateSettings(ctx);
   const today = todayString();
@@ -3003,7 +3675,11 @@ async function completeSubtree(ctx, file, startLine, endLine) {
 }
 /** Cancel a task and every open subtask beneath it, each with the cancelled date Tasks
  * would add. Subtasks already done or cancelled are left as they are: done work stays done.
- * One write, so the undo journal sees a single change. */
+ * One write, so the undo journal sees a single change.
+ * @param {Ctx} ctx
+ * @param {obsidian.TFile} file
+ * @param {number} startLine
+ * @param {number} endLine */
 async function cancelSubtree(ctx, file, startLine, endLine) {
   const dates = await finishedDateSettings(ctx);
   const today = todayString();
@@ -3018,9 +3694,11 @@ async function cancelSubtree(ctx, file, startLine, endLine) {
     return lines.join("\n");
   });
 }
+/** @param {string} line */
 function isTaskLine(line) {
   return /^\s*(?:[-*+]|\d+[.)])\s+\[.\]/.test(line || "");
 }
+/** @param {string} line */
 function taskStatusOf(line) {
   const m = String(line || "").match(/^\s*(?:[-*+]|\d+[.)])\s+\[(.)\]/);
   return m ? m[1] : null;
@@ -3054,7 +3732,10 @@ var MAX_SUBTASK_RETRIES = 20;
  * project walk separately once already.
  *
  * journalledApp wraps whatever app it is handed, so writes pass through both journals:
- * the inner can undo just this sub-item while the outer still holds the task's start. */
+ * the inner can undo just this sub-item while the outer still holds the task's start.
+ * @param {Ctx} ctx
+ * @param {ReviewItem} subItem
+ * @param {number} depth */
 async function attemptSubItem(ctx, subItem, depth) {
   const journal = new VaultJournal(ctx.app);
   await journal.capture(subItem.file);
@@ -3077,6 +3758,11 @@ async function attemptSubItem(ctx, subItem, depth) {
     throw e;
   }
 }
+/**
+ * @param {Ctx} ctx
+ * @param {ReviewItem} item
+ * @param {number} depth
+ */
 async function processProjectChildren(ctx, item, depth) {
   const { prompter, settings } = ctx;
   let cursor = item.startLine + 1;
@@ -3123,7 +3809,10 @@ async function processProjectChildren(ctx, item, depth) {
   return computeSubtreeEnd(lines, item.startLine);
 }
 /** Offer a rewrite when a freshly written next action reads as vague. Silent when it looks
- * fine, so a well-formed action costs nothing. */
+ * fine, so a well-formed action costs nothing.
+ * @param {Ctx} ctx
+ * @param {obsidian.TFile} file
+ * @param {number} line */
 /* Both return the rewritten line when the user rewrites it, or null — so a caller holding
  * the task can keep its text current. A stale copy would make the task impossible to find
  * again by its text later in the same review. */
@@ -3163,7 +3852,11 @@ async function confirmNextAction(ctx, file, line) {
  * obviously unusable action is never filed silently. */
 /** Put a filed action on screen under the project it is now in, so the question about it
  * is asked about what you can see. It used to be asked with the task still shown as it was
- * before filing — on its own, without the project it had just been put under, or made. */
+ * before filing — on its own, without the project it had just been put under, or made.
+ * @param {Ctx} ctx
+ * @param {obsidian.TFile} file
+ * @param {number} line
+ * @param {string} [sourceLabel] */
 async function showFiledAction(ctx, file, line, sourceLabel = null) {
   const p = ctx.prompter;
   if (!p || typeof p.highlightInSource !== "function") return;
@@ -3175,6 +3868,12 @@ async function showFiledAction(ctx, file, line, sourceLabel = null) {
     parentRaw: ancestors.length ? ancestors.map((k) => lines[k]).join("\n") : null, sourceLabel
   });
 }
+/**
+ * @param {Ctx} ctx
+ * @param {obsidian.TFile} file
+ * @param {number} line
+ * @param {string} [sourceLabel]
+ */
 async function clarifyFiledAction(ctx, file, line, sourceLabel = null) {
   const { prompter, settings } = ctx;
   await showFiledAction(ctx, file, line, sourceLabel);
@@ -3216,7 +3915,8 @@ async function clarifyFiledAction(ctx, file, line, sourceLabel = null) {
  * outcome the batch's own fail-safe gives. */
 /** Whether this review can offer the two-minute batch. The batch only runs at the end of
  * Process; offering it during Organise would queue tasks into a batch that never happens,
- * which looks like a decision taken and is in fact nothing at all. */
+ * which looks like a decision taken and is in fact nothing at all.
+ * @param {Ctx} ctx */
 function canBatch(ctx) {
   return Array.isArray(ctx.quickBatch) && ctx.mode !== "organise";
 }
@@ -3224,7 +3924,10 @@ function canBatch(ctx) {
  *
  * Batching is one more option on a question already being asked, not a new prompt per
  * action: it costs a tap only when used. Choosing it queues the action and returns to the
- * same question, so you still decide whether to add more. Returns "another" or "done". */
+ * same question, so you still decide whether to add more. Returns "another" or "done".
+ * @param {Ctx} ctx
+ * @param {obsidian.TFile} file
+ * @param {Session} session */
 async function askAfterAction(ctx, file, session) {
   const { prompter } = ctx;
   for (let n = 0; n < MAX_SUBTASK_RETRIES * 2; n++) {
@@ -3259,6 +3962,10 @@ async function askAfterAction(ctx, file, session) {
   }
   return "done";
 }
+/**
+ * @param {Ctx} ctx
+ * @param {ReviewItem} item
+ */
 function queueQuickAction(ctx, item) {
   if (!Array.isArray(ctx.quickBatch)) return false;
   ctx.quickBatch.push({ file: item.file, line: item.startLine, raw: item.raw });
@@ -3266,13 +3973,18 @@ function queueQuickAction(ctx, item) {
 }
 /** Where a queued task is now, or -1 if it has gone. By the time the batch runs, earlier
  * tasks may have moved lines about, so it is found again by its text — and anything whose
- * text no longer matches has been changed or removed since, and is not ours to touch. */
+ * text no longer matches has been changed or removed since, and is not ours to touch.
+ * @param {string[]} lines
+ * @param {QuickEntry} entry */
 function locateQueuedAction(lines, entry) {
   return locateByText(lines, entry.line, entry.raw);
 }
 /** Where a line with exactly this text is now — nearest to `predicted` — or -1 if no line
  * has it. Unlike reanchorLine, never falls back to the predicted line: a line that no
- * longer reads as expected is not the one that was meant. */
+ * longer reads as expected is not the one that was meant.
+ * @param {string[]} lines
+ * @param {number} predicted
+ * @param {string} raw */
 function locateByText(lines, predicted, raw) {
   const at = reanchorLine(lines, predicted, raw);
   if (at < 0 || at >= lines.length) return -1;
@@ -3286,7 +3998,8 @@ function locateByText(lines, predicted, raw) {
  * hides a project beside some loose tasks sorts itself out. */
 var MAX_SPLIT_PIECES = 20;
 /** A typed piece, with any list marker or checkbox the user included stripped off. A
- * marker needs a following space to count, so "+1 the report" is left as written. */
+ * marker needs a following space to count, so "+1 the report" is left as written.
+ * @param {string} text */
 function cleanPieceText(text) {
   return String(text || "").replace(/^\s*(?:[-*+]\s+|\d+[.)]\s+)?(?:\[.\]\s*)?/, "").trim();
 }
@@ -3294,8 +4007,12 @@ function cleanPieceText(text) {
  *
  * The first piece takes the capture's place, so anything indented beneath it — notes,
  * links — stays attached to it; the rest follow after that subtree as siblings. Each piece
- * keeps the capture's indentation and list marker, and starts open. */
+ * keeps the capture's indentation and list marker, and starts open.
+ * @param {PluginApp} app
+ * @param {ReviewItem} item
+ * @param {string[]} pieces */
 async function replaceWithPieces(app, item, pieces) {
+  /** @type {string[]} */
   const raws = [];
   await app.vault.process(item.file, (data) => {
     const lines = data.split("\n");
@@ -3321,7 +4038,12 @@ async function replaceWithPieces(app, item, pieces) {
  *
  * Each piece is found again by its text before it is processed, because handling an
  * earlier one may have moved lines — filing it under a project elsewhere in the note
- * reorders the file without changing its length. A piece that has gone is passed over. */
+ * reorders the file without changing its length. A piece that has gone is passed over.
+ * @param {Ctx} ctx
+ * @param {obsidian.TFile} file
+ * @param {string[]} raws
+ * @param {number} startLine
+ * @param {number} depth */
 async function processSplitPieces(ctx, file, raws, startLine, depth) {
   const { prompter, settings } = ctx;
   let predicted = startLine;
@@ -3336,6 +4058,7 @@ async function processSplitPieces(ctx, file, raws, startLine, depth) {
     }
     const end = computeSubtreeEnd(lines, at);
     const ancestors = computeAncestorLines(lines, at);
+    /** @type {ReviewItem} */
     const piece = {
       file,
       startLine: at,
@@ -3363,7 +4086,10 @@ async function processSplitPieces(ctx, file, raws, startLine, depth) {
   }
   return processed;
 }
-/** Ask for the pieces, write them in, and process each. */
+/** Ask for the pieces, write them in, and process each.
+ * @param {Ctx} ctx
+ * @param {ReviewItem} item
+ * @param {number} depth */
 async function splitCapture(ctx, item, depth) {
   const { prompter } = ctx;
   const pieces = [];
@@ -3400,10 +4126,13 @@ async function splitCapture(ctx, item, depth) {
  * The wording is clarified only for the answers you will meet again — deferred, Someday,
  * reference, moved — and only once. It used to be asked first, for everything, so a task
  * about to be cancelled or ticked off had to be reworded on its way out. Cancelling the
- * editor comes back to this question, as cancelling does everywhere. */
+ * editor comes back to this question, as cancelling does everywhere.
+ * @param {Ctx} ctx
+ * @param {ReviewItem} item */
 async function settleNotActionable(ctx, item) {
   const { prompter, settings } = ctx;
   const enabled = new Map(disposeOptions(settings).map((a) => [a.value, a]));
+  /** @param {DisposeAction} a */
   const answer = (a) => ({ label: a.label, value: a.value });
   const cancel = enabled.get("cancel");
   const del = enabled.get("delete");
@@ -3513,15 +4242,21 @@ async function settleNotActionable(ctx, item) {
   // Asked again and again with nothing settled: start the task again rather than spin.
   throw new ReviewControl("retry");
 }
-/** The tag that marks a waiting-for, without its #. */
+/** The tag that marks a waiting-for, without its #.
+ * @param {Settings} settings */
 function waitingForTag(settings) {
   const tag = String(settings && settings.waitingForTag || "").trim().replace(/^#/, "");
   return tag || "waitingfor";
 }
+/**
+ * @param {string} line
+ * @param {Settings} settings
+ */
 function isWaitingFor(line, settings) {
   return hasExactTag(String(line || ""), waitingForTag(settings));
 }
-/** When to chase a waiting-for. Returns a YYYY-MM-DD after today, "" for no date, or null. */
+/** When to chase a waiting-for. Returns a YYYY-MM-DD after today, "" for no date, or null.
+ * @param {Ctx} ctx */
 async function pickChaseDate(ctx) {
   const { prompter } = ctx;
   const today = todayString();
@@ -3548,7 +4283,9 @@ async function pickChaseDate(ctx) {
 /** Someone else does it. What is left for you is to wait and, if nothing comes, to chase:
  * the task is reworded as what you are waiting for and from whom, tagged as a waiting-for,
  * and given the date you would chase it as its start date — the same date Not yet uses, so
- * it stays out of Process until then. Cancelling the wording starts the task again. */
+ * it stays out of Process until then. Cancelling the wording starts the task again.
+ * @param {Ctx} ctx
+ * @param {ReviewItem} item */
 async function delegateTask(ctx, item) {
   const { prompter, settings } = ctx;
   const tag = waitingForTag(settings);
@@ -3566,10 +4303,16 @@ async function delegateTask(ctx, item) {
     prompter.info("Waiting for — no chase date.");
   }
 }
+/**
+ * @param {Ctx} ctx
+ * @param {ReviewItem} item
+ * @param {number} [depth]
+ */
 async function runProcess(ctx, item, depth = 0) {
   const { prompter, settings, tasks } = ctx;
   /* Yes and No first, in that order on every item: they are most of the answers, and a
    * fixed place for each is what lets a hand learn where to go. */
+  /** @type {ChoiceOption<boolean | string>[]} */
   const actionableOptions = [{ label: "Yes", value: true }, { label: "No", value: false }];
   /* The two-minute rule is answered HERE, on the first question, not after "Yes" on the
    * next one: a two-step route to it went unused. Process only — the batch runs at the
@@ -3749,6 +4492,7 @@ async function runProcess(ctx, item, depth = 0) {
  * Counted at the end, from what became of each task. Only tasks the review was working
  * through are counted — not a project's own next actions — and anything undone with Back
  * or Previous is not counted at all. */
+/** @type {Record<string, [string, string]>} singular and plural, by outcome */
 var SUMMARY_WORDS = {
   next: ["next action", "next actions"],
   project: ["project", "projects"],
@@ -3766,14 +4510,20 @@ var SUMMARY_WORDS = {
 };
 // Outcomes that take a task out of Organise too, when it is re-processed there.
 var LEAVING_OUTCOMES = /* @__PURE__ */ new Set(["deferred", "someday", "reference", "moved", "complete", "cancel", "delete"]);
-/** What became of one task: a list, since a split capture is each of its pieces. */
+/** What became of one task: a list, since a split capture is each of its pieces.
+ * @param {ReviewItem} item
+ * @param {string} mode
+ * @returns {string[]} */
 function outcomesOf(item, mode) {
   if (mode === "organise") return [LEAVING_OUTCOMES.has(item.outcome) ? item.outcome : "organised"];
   if (item.outcome === "split") return (item.splitPieces || []).flatMap((p) => outcomesOf(p, mode));
   return item.outcome ? [item.outcome] : [];
 }
-/** "6 next actions", "2 to Someday"…, in the order the answers are offered. */
+/** "6 next actions", "2 to Someday"…, in the order the answers are offered.
+ * @param {string[]} outcomes
+ * @param {number} [batchDone] */
 function sessionSummary(outcomes, batchDone = 0) {
+  /** @type {Map<string, number>} */
   const counts = /* @__PURE__ */ new Map();
   for (const o of outcomes) if (SUMMARY_WORDS[o]) counts.set(o, (counts.get(o) || 0) + 1);
   const lines = Object.keys(SUMMARY_WORDS).filter((k) => counts.has(k)).map((k) => {
@@ -3789,15 +4539,19 @@ function sessionSummary(outcomes, batchDone = 0) {
  * chain without breaking it. */
 var TASK_ID_RE = /\u{1F194}️?\s*([A-Za-z0-9_-]+)/u;
 var DEPENDS_ON_RE = /\s*⛔️?\s*([A-Za-z0-9_-]+(?:\s*,\s*[A-Za-z0-9_-]+)*)/u;
+/** @param {string} line */
 function taskIdOf(line) {
   const m = String(line || "").match(TASK_ID_RE);
   return m ? m[1] : null;
 }
+/** @param {string} line */
 function dependsOnOf(line) {
   const m = String(line || "").match(DEPENDS_ON_RE);
   return m ? m[1].split(",").map((x) => x.trim()).filter(Boolean) : [];
 }
-/** Replace a line's "waits on" list; an empty list removes the marker altogether. */
+/** Replace a line's "waits on" list; an empty list removes the marker altogether.
+ * @param {string} line
+ * @param {string[]} ids */
 function setDependsOn(line, ids) {
   const text = String(line || "");
   const marker = ids.length ? ` ⛔ ${ids.join(",")}` : "";
@@ -3805,7 +4559,10 @@ function setDependsOn(line, ids) {
   return marker ? `${text.replace(/\s+$/, "")}${marker}` : text;
 }
 /** A line's id, adding one if it has none. Reused when present: a task may carry only one,
- * and a next action removed from the chain can leave its predecessor named already. */
+ * and a next action removed from the chain can leave its predecessor named already.
+ * @param {Ctx} ctx
+ * @param {obsidian.TFile} file
+ * @param {number} line */
 async function ensureTaskId(ctx, file, line) {
   const current = await readLine(ctx.app, file, line);
   const existing = taskIdOf(current);
@@ -3815,7 +4572,11 @@ async function ensureTaskId(ctx, file, line) {
   return id;
 }
 /** Remove a next action made in this go. Anything that was waiting on it now waits on
- * whatever it was waiting on, so "is not blocked" lists still show the right action. */
+ * whatever it was waiting on, so "is not blocked" lists still show the right action.
+ * @param {Ctx} ctx
+ * @param {obsidian.TFile} file
+ * @param {Session} session
+ * @param {Session['made'][number]} target */
 async function removeMadeAction(ctx, file, session, target) {
   await ctx.app.vault.process(file, (data) => {
     const lines = data.split("\n");
@@ -3847,7 +4608,11 @@ async function removeMadeAction(ctx, file, session, target) {
  * Back, and cancelling the reword dialogue, each return to the question before. */
 /** Put a next action made in this go on screen, under its project — the project greyed above
  * it, as when Organise labels a project's next actions. Without this the pane went on
- * showing the project alone, so "Next action saved." never showed what had been saved. */
+ * showing the project alone, so "Next action saved." never showed what had been saved.
+ * @param {Ctx} ctx
+ * @param {obsidian.TFile} file
+ * @param {Session} session
+ * @param {number} line */
 async function showMadeAction(ctx, file, session, line) {
   if (!ctx.prompter.focusSubtask) return;
   const raw = await readLine(ctx.app, file, line);
@@ -3855,6 +4620,11 @@ async function showMadeAction(ctx, file, session, line) {
   const parentRaw = typeof session.parentLine === "number" ? await readLine(ctx.app, file, session.parentLine) : null;
   ctx.prompter.focusSubtask({ file, raw: parentRaw == null ? null : parentRaw }, line, raw);
 }
+/**
+ * @param {Ctx} ctx
+ * @param {obsidian.TFile} file
+ * @param {Session} session
+ */
 async function fixMadeAction(ctx, file, session) {
   const { prompter } = ctx;
   for (let n = 0; n < MAX_SUBTASK_RETRIES; n++) {
@@ -3897,6 +4667,15 @@ async function fixMadeAction(ctx, file, session) {
     if (session.made.length <= 1) return;
   }
 }
+/**
+ * @param {Ctx} ctx
+ * @param {obsidian.TFile} file
+ * @param {number} insertAfter
+ * @param {number} seedPrevLine
+ * @param {boolean} [editSeedFirst]
+ * @param {boolean} [requireOne]
+ * @param {number} [parentLine]
+ */
 async function addSubtasks(ctx, file, insertAfter, seedPrevLine, editSeedFirst = false, requireOne = false, parentLine) {
   const { prompter, tasks } = ctx;
   /* One level below the PROJECT, not one level below the margin. They differ once the
@@ -3910,6 +4689,7 @@ async function addSubtasks(ctx, file, insertAfter, seedPrevLine, editSeedFirst =
   /* Everything made in this go, in order: { line, entry }, where entry is its place in the
    * two-minute batch if it has one. Kept so one can be fixed without starting again. The
    * first new action goes after `insertAfter`, and waits (if asked) on `seedPrevLine`. */
+  /** @type {Session} */
   const session = { made: [], parentLine };
   const lastMade = () => session.made.length ? session.made[session.made.length - 1].line : null;
   for (let cancels = 0; cancels < MAX_SUBTASK_RETRIES; ) {
@@ -3974,7 +4754,12 @@ async function addSubtasks(ctx, file, insertAfter, seedPrevLine, editSeedFirst =
  * steps such as adding a next action move its end line.
  *
  * `localRetry` treats a cancelled dialogue as "do this attempt again" rather than letting
- * it restart the whole task — for a project's next action, the smallest unit. */
+ * it restart the whole task — for a project's next action, the smallest unit.
+ * @param {Ctx} ctx
+ * @param {ReviewItem} unit
+ * @param {(ctx: Ctx) => Promise<unknown>} first
+ * @param {(ctx: Ctx, how?: string) => Promise<unknown>} again
+ * @param {{ localRetry?: boolean }} [options] */
 async function withReprocess(ctx, unit, first, again, { localRetry = false } = {}) {
   const snap = {
     startLine: unit.startLine,
@@ -4027,7 +4812,9 @@ async function withReprocess(ctx, unit, first, again, { localRetry = false } = {
   }
 }
 /** Find a unit again after something may have moved it, and re-read what it is now.
- * Returns false if it is gone, finished, or no longer a task. */
+ * Returns false if it is gone, finished, or no longer a task.
+ * @param {Ctx} ctx
+ * @param {ReviewItem} unit */
 async function refreshUnit(ctx, unit) {
   let lines;
   try {
@@ -4050,7 +4837,10 @@ async function refreshUnit(ctx, unit) {
   return true;
 }
 /** Label a unit without filing it: for something that lives inside a project. A project's
- * own line is not labelled — its next actions are, as when Organise meets one at the top. */
+ * own line is not labelled — its next actions are, as when Organise meets one at the top.
+ * @param {Ctx} ctx
+ * @param {ReviewItem} unit
+ * @param {ReviewItem | ProjectRef} parent */
 async function labelUnit(ctx, unit, parent) {
   if (!unit.isProject) {
     if (ctx.prompter.focusSubtask) ctx.prompter.focusSubtask(parent || unit, unit.startLine, unit.raw);
@@ -4066,7 +4856,12 @@ async function labelUnit(ctx, unit, parent) {
 /** After re-processing, organise whatever the task has become.
  *
  * `fileIt` is false inside a project: a next action is labelled where it is, and moves
- * with its project when that is filed. */
+ * with its project when that is filed.
+ * @param {Ctx} ctx
+ * @param {ReviewItem} unit
+ * @param {DefaultFilingStrategy} filing
+ * @param {boolean} fileIt
+ * @param {ReviewItem | ProjectRef} parent */
 async function organiseAfterProcess(ctx, unit, filing, fileIt, parent) {
   // Deleted, completed, sent to Someday, filed as reference, moved, or deferred and placed:
   // Process has already decided where it lives.
@@ -4089,7 +4884,10 @@ async function organiseAfterProcess(ctx, unit, filing, fileIt, parent) {
 }
 /** How to re-process what is on screen. From a project's next action, the whole project is
  * one more answer: Organise shows a project as its next actions, one at a time, so without
- * it the project itself could only be re-processed once every action had been labelled. */
+ * it the project itself could only be re-processed once every action had been labelled.
+ * @param {Ctx} ctx
+ * @param {boolean} isNextAction
+ * @param {boolean} [isProject] */
 async function askHowToReprocess(ctx, isNextAction, isProject = false) {
   const options = [
     { label: "Fix the **wording**…", value: "wording" },
@@ -4105,13 +4903,18 @@ async function askHowToReprocess(ctx, isNextAction, isProject = false) {
 }
 /** The signal for "process the whole project again", raised from one of its next actions.
  * Aimed at the project's handler, so the next action's own handler lets it through, and the
- * rollback reaches back to before anything in the project was organised. */
+ * rollback reaches back to before anything in the project was organised.
+ * @param {ReviewItem | ProjectRef} project */
 function reprocessWholeProject(project) {
   const e = new ReviewControl("reprocess");
   e.target = project;
   e.how = "process";
   return e;
 }
+/**
+ * @param {Ctx} ctx
+ * @param {ReviewItem} unit
+ */
 async function rewordUnit(ctx, unit) {
   guide(
     ctx,
@@ -4128,7 +4931,11 @@ async function rewordUnit(ctx, unit) {
   return (await refreshUnit(ctx, unit)) ? "ok" : "gone";
 }
 /** `preset` is an answer already given — "process", when the whole project was chosen from
- * one of its next actions — so the question is not asked a second time. */
+ * one of its next actions — so the question is not asked a second time.
+ * @param {Ctx} ctx
+ * @param {ReviewItem} item
+ * @param {DefaultFilingStrategy} filing
+ * @param {string} preset */
 async function reprocessTask(ctx, item, filing, preset) {
   if (ctx.prompter.highlightInSource) await ctx.prompter.highlightInSource(item);
   let how = preset === "process" ? "process" : void 0;
@@ -4152,6 +4959,11 @@ async function reprocessTask(ctx, item, filing, preset) {
   }
   await organiseTask(ctx, item, filing);
 }
+/**
+ * @param {Ctx} ctx
+ * @param {ReviewItem | ProjectRef} project
+ * @param {ReviewItem} unit
+ */
 async function reprocessNextAction(ctx, project, unit) {
   ctx.prompter.focusSubtask(project, unit.startLine, unit.raw);
   let how;
@@ -4178,15 +4990,20 @@ async function reprocessNextAction(ctx, project, unit) {
  *
  * Each is found again by its text before it is shown, because re-processing an earlier one
  * can add, remove or move lines. A next action that has gone or changed is passed over, as
- * is anything that now sits inside one that was just re-processed — that was handled with it. */
+ * is anything that now sits inside one that was just re-processed — that was handled with it.
+ * @param {Ctx} ctx
+ * @param {ReviewItem | ProjectRef} project
+ * @param {{ line: number, raw: string }[]} children */
 async function organiseNextActions(ctx, project, children) {
   let delta = 0;
+  /** @type {Set<string>} */
   const handled = new Set();
   for (const child of children) {
     const lines = (await ctx.app.vault.read(project.file)).split("\n");
     const at = reanchorLine(lines, child.line + delta, child.raw);
     if (at < 0 || at >= lines.length || lines[at].trim() !== child.raw.trim()) continue;
     if (handled.has(lines[at].trim())) continue;
+    /** @type {ReviewItem} */
     const unit = {
       file: project.file,
       startLine: at,
@@ -4213,7 +5030,10 @@ async function organiseNextActions(ctx, project, children) {
     delta += (await lineCount(ctx.app, project.file)) - before;
   }
 }
-/** Organise one task: label it (or a project's next actions) and file it. */
+/** Organise one task: label it (or a project's next actions) and file it.
+ * @param {Ctx} ctx
+ * @param {ReviewItem} item
+ * @param {DefaultFilingStrategy} filing */
 async function organiseTask(ctx, item, filing) {
   if (item.isProject) {
     /* "Process the whole project again" needs a handler for this project to land in. Organise
@@ -4252,7 +5072,10 @@ async function organiseTask(ctx, item, filing) {
  *
  * "Open" is anything not done or cancelled, at any depth: a deferred step or a waiting-for
  * still counts, since the project is then deferred or waiting, not empty. */
-/** The nearest project a line sits under: { line, raw }, or null. */
+/** The nearest project a line sits under: { line, raw }, or null.
+ * @param {string[]} lines
+ * @param {number} line
+ * @param {string} projectTag */
 function projectAbove(lines, line, projectTag) {
   const ancestors = computeAncestorLines(lines, line);
   for (let k = ancestors.length - 1; k >= 0; k--) {
@@ -4261,7 +5084,12 @@ function projectAbove(lines, line, projectTag) {
   }
   return null;
 }
-/** Open tasks under the project at `start`, leaving out lines `skipStart`…`skipEnd`. */
+/** Open tasks under the project at `start`, leaving out lines `skipStart`…`skipEnd`.
+ * @param {string[]} lines
+ * @param {number} start
+ * @param {number} end
+ * @param {number} [skipStart]
+ * @param {number} [skipEnd] */
 function openTasksUnder(lines, start, end, skipStart = -1, skipEnd = -2) {
   let n = 0;
   for (let i = start + 1; i <= end && i < lines.length; i++) {
@@ -4278,7 +5106,9 @@ var EMPTY_PROJECT_ANSWERS = [
   { label: "**Leave** it for now", value: "leave" }
 ];
 /** What becomes of a project with no next action. `suggest` marks the likely answer,
- * from what happened to its last one; every answer keeps its place. */
+ * from what happened to its last one; every answer keeps its place.
+ * @param {Ctx} ctx
+ * @param {string} [suggest] */
 async function askEmptyProject(ctx, suggest = null) {
   return ctx.prompter.choice(
     "This project has **no next action**.",
@@ -4287,7 +5117,11 @@ async function askEmptyProject(ctx, suggest = null) {
   );
 }
 /** Carry out an answer about a project, found again by its text. Returns "someday",
- * "done", "cancel", "added", "none-added" (adding was cancelled), "left" or "gone". */
+ * "done", "cancel", "added", "none-added" (adding was cancelled), "left" or "gone".
+ * @param {Ctx} ctx
+ * @param {obsidian.TFile} file
+ * @param {ProjectRef} project
+ * @param {string} answer */
 async function settleEmptyProject(ctx, file, project, answer) {
   const lines = (await ctx.app.vault.read(file)).split("\n");
   const at = locateByText(lines, project.line, project.raw);
@@ -4309,7 +5143,11 @@ async function settleEmptyProject(ctx, file, project, answer) {
   return "left";
 }
 /** Ask about a project that has nothing left to do, with it on screen, and act on the
- * answer. A next action that is added and then cancelled comes back to the question. */
+ * answer. A next action that is added and then cancelled comes back to the question.
+ * @param {Ctx} ctx
+ * @param {obsidian.TFile} file
+ * @param {ProjectRef} project
+ * @param {string} [suggest] */
 async function resolveEmptyProject(ctx, file, project, suggest = null) {
   let known = project;
   for (let n = 0; n < MAX_SUBTASK_RETRIES; n++) {
@@ -4331,7 +5169,10 @@ async function resolveEmptyProject(ctx, file, project, suggest = null) {
   }
   return "left";
 }
-/** After a task's decision: if the project it was in now has nothing left to do, ask. */
+/** After a task's decision: if the project it was in now has nothing left to do, ask.
+ * @param {Ctx} ctx
+ * @param {ReviewItem} item
+ * @param {ProjectRef} project */
 async function settleProjectLeft(ctx, item, project) {
   const lines = (await ctx.app.vault.read(item.file)).split("\n");
   const at = locateByText(lines, project.line, project.raw);
@@ -4341,7 +5182,9 @@ async function settleProjectLeft(ctx, item, project) {
 }
 /** Someday for a project's last open task: whole project, or just this step? Asked before
  * anything moves, so the whole project can go with the step still inside it. Returns true
- * if the step needs nothing more — it went with its project, or will after the walk. */
+ * if the step needs nothing more — it went with its project, or will after the walk.
+ * @param {Ctx} ctx
+ * @param {ReviewItem} item */
 async function somedayLastOfProject(ctx, item) {
   const lines = (await ctx.app.vault.read(item.file)).split("\n");
   const project = projectAbove(lines, item.startLine, ctx.settings.projectTag);
@@ -4372,7 +5215,9 @@ async function somedayLastOfProject(ctx, item) {
   return false;
 }
 /** After a project's own walk: its last next action may have gone during it. Returns true
- * if that is settled here, in place of "Add another next action…". */
+ * if that is settled here, in place of "Add another next action…".
+ * @param {Ctx} ctx
+ * @param {ReviewItem} item */
 async function settleProjectAfterWalk(ctx, item) {
   const lines = (await ctx.app.vault.read(item.file)).split("\n");
   const at = locateByText(lines, item.startLine, item.raw);
@@ -4398,7 +5243,10 @@ async function settleProjectAfterWalk(ctx, item) {
   else if (result === "cancel") item.outcome = "cancel";
   return true;
 }
-/** A project: make sure it has a next action, label each one, then file it whole. */
+/** A project: make sure it has a next action, label each one, then file it whole.
+ * @param {Ctx} ctx
+ * @param {ReviewItem} item
+ * @param {DefaultFilingStrategy} filing */
 async function organiseProject(ctx, item, filing) {
   /* GTD's core project rule: every active project has at least one next action. Without
    * one it sits on your list as a reminder you can do nothing about. Organise is where a
@@ -4429,6 +5277,11 @@ async function organiseProject(ctx, item, filing) {
   if (ctx.prompter.highlightInSource) await ctx.prompter.highlightInSource(item);
   await filing.fileTask(ctx, item);
 }
+/**
+ * @param {Ctx} ctx
+ * @param {ReviewItem} item
+ * @param {DefaultFilingStrategy} filing
+ */
 async function runOrganise(ctx, item, filing) {
   await withReprocess(
     ctx,
@@ -4450,7 +5303,10 @@ var CONTEXT_HINTS = [
   { verbs: ["clean", "tidy", "cook", "wash", "water", "hoover", "vacuum", "iron", "bake", "mow", "hang"], names: ["home", "house"] },
   { verbs: ["print", "scan", "photocopy"], names: ["office", "printer", "work"] }
 ];
-/** The id of the context a task's opening verb points to, or null. */
+/** The id of the context a task's opening verb points to, or null.
+ * @param {Dimension} dim
+ * @param {string} line
+ * @param {Settings} settings */
 function suggestContext(dim, line, settings) {
   const words = stripFiller(normaliseForMatch(actionText(line)), fillerPhrases(settings)).split(" ");
   const opening = [words.slice(0, 2).join(" "), words[0]];
@@ -4462,6 +5318,12 @@ function suggestContext(dim, line, settings) {
   });
   return value ? value.id : null;
 }
+/**
+ * @param {Ctx} ctx
+ * @param {obsidian.TFile} file
+ * @param {number} line
+ * @param {string} raw
+ */
 async function organiseLine(ctx, file, line, raw) {
   var _a;
   const { prompter, settings } = ctx;
@@ -4521,6 +5383,10 @@ async function organiseLine(ctx, file, line, raw) {
  * tasks into the same project or area is one tap after the first. Your quick destinations
  * are offered already, so they are not repeated here. */
 var MAX_RECENT_DESTINATIONS = 3;
+/**
+ * @param {Ctx} ctx
+ * @param {ReviewItem} item
+ */
 function recentDestinationOptions(ctx, item) {
   const { settings } = ctx;
   const curated = new Set((settings.curatedMoveTargets || []).map((p) => p.trim()));
@@ -4533,6 +5399,10 @@ function recentDestinationOptions(ctx, item) {
       return { label: `**${name}**${slash > 0 ? ` \u2014 ${p.slice(0, slash)}` : ""}`, value: p, group: "Recent" };
     });
 }
+/**
+ * @param {Ctx} ctx
+ * @param {string} path
+ */
 async function rememberDestination(ctx, path) {
   const { settings } = ctx;
   if (!settings || (settings.curatedMoveTargets || []).some((p) => p.trim() === path)) return;
@@ -4553,7 +5423,10 @@ var DefaultFilingStrategy = class {
    * Dismissing a picker, or choosing Back, returns to this question — the one that opened
    * it. It used to leave the task where it was and move on to the next one, so a slip of
    * the thumb meant Revert, which also undoes the task before. Skip task remains the
-   * deliberate way to move on. */
+   * deliberate way to move on.
+   * @param {Ctx} ctx
+   * @param {ReviewItem} item
+   * @param {FileTaskOptions} [opts] */
   async fileTask(ctx, item, opts = {}) {
     for (let n = 0; n < MAX_SUBTASK_RETRIES; n++) {
       const result = await this.fileTaskOnce(ctx, item, opts);
@@ -4561,6 +5434,11 @@ var DefaultFilingStrategy = class {
     }
     return "cancelled";
   }
+  /**
+   * @param {Ctx} ctx
+   * @param {ReviewItem} item
+   * @param {FileTaskOptions} opts
+   */
   async fileTaskOnce(ctx, item, opts) {
     const { prompter, settings } = ctx;
     const options = [];
@@ -4569,6 +5447,7 @@ var DefaultFilingStrategy = class {
      * then searching for a note, which is where most tasks go; then a new note. A heading in
      * this note follows — offered only when working through a note, and only when there is
      * a heading to go to other than the one the task is already under. */
+    /** @type {Heading[]} */
     let headings = [];
     if (ctx.sourceKind === "file") {
       const lines = (await ctx.app.vault.read(item.file)).split("\n");
@@ -4669,6 +5548,7 @@ var DefaultFilingStrategy = class {
  *
  * Prompts drawn from your vault all read the same way, "Anything about X?": they are
  * reminders of where to look, not questions about what you will find there. */
+/** @type {[string, string[]][]} heading, then its reminders */
 var DEFAULT_TRIGGERS = [
   ["Commitments", ["Promises you’ve made", "Things people are waiting on from you", "Things you said you’d look into"]],
   ["Communication", ["Calls to make or return", "Emails and messages to answer", "Forms, letters and replies to send", "Conversations you’ve been putting off"]],
@@ -4689,9 +5569,12 @@ function defaultTriggerText() {
   ].join("\n");
 }
 /** The trigger list as { heading, items } sections. Reminders before any heading go under
- * "Anything else". */
+ * "Anything else".
+ * @param {string} text */
 function parseTriggerList(text) {
+  /** @type {TriggerSection[]} */
   const sections = [];
+  /** @type {TriggerSection | null} */
   let current = null;
   for (const raw of String(text || "").split(/\r?\n/)) {
     const line = raw.trim();
@@ -4711,30 +5594,46 @@ function parseTriggerList(text) {
   }
   return sections;
 }
+/** @param {Settings} settings */
 function triggerSections(settings) {
   const text = settings && typeof settings.sweepTriggers === "string" ? settings.sweepTriggers : defaultTriggerText();
   return parseTriggerList(text);
 }
+/** @param {Settings} settings */
 function sweepInboxPath(settings) {
   const p = String(settings && settings.sweepInboxPath || "").trim();
   if (!p) return "Inbox.md";
   return /\.md$/i.test(p) ? p : `${p}.md`;
 }
-/** A folder setting as a path with no slashes at either end; "" for the vault root. */
+/** A folder setting as a path with no slashes at either end; "" for the vault root.
+ * @param {string} value */
 function folderSetting(value) {
   return String(value || "").trim().replace(/^\/+|\/+$/g, "");
 }
+/**
+ * @param {string} path
+ * @param {string} folder
+ */
 function inFolder(path, folder) {
   return !folder || path.startsWith(`${folder}/`);
 }
-/** Every prompt the sweep will show, in order: { group, question, note, reminders }. */
+/** Every prompt the sweep will show, in order: { group, question, note, reminders }.
+ * @param {PluginApp} app
+ * @param {Settings} settings */
 async function sweepPrompts(app, settings) {
+  /** @type {SweepPrompt[]} */
   const prompts = [{
     group: "mind",
     question: "What’s **on your mind**?",
     note: "Anything at all — big or small, work or home. One thing at a time; press Enter after each.",
     reminders: []
   }];
+  /**
+   * @param {string} group
+   * @param {string} kind
+   * @param {string[]} names
+   * @param {(index: number) => string[]} [remindersOf]
+   */
   const add = (group, kind, names, remindersOf = () => []) => {
     names.forEach((name, i) => prompts.push({
       group,
@@ -4765,6 +5664,7 @@ async function sweepPrompts(app, settings) {
   /* A trigger with the same name as an area, project or context already asked about —
    * Health, Home — lends that prompt its reminders rather than being asked twice. */
   const asked = new Map(prompts.map((p) => [plainText(p.question).toLowerCase(), p]));
+  /** @type {TriggerSection[]} */
   const triggers = [];
   for (const t of triggerSections(settings)) {
     const same = asked.get(`anything about ${t.heading.toLowerCase()}?`);
@@ -4774,15 +5674,25 @@ async function sweepPrompts(app, settings) {
   add("triggers", "Trigger list", triggers.map((t) => t.heading), (i) => triggers[i].items);
   return prompts;
 }
+/** @type {Record<string, string>} */
 var SWEEP_GROUP_NAMES = { areas: "areas of focus", projects: "projects", contexts: "contexts", triggers: "the trigger list" };
-/** A thought as one task's words: lines joined, spaces tidied, any list marker dropped. */
+/** A thought as one task's words: lines joined, spaces tidied, any list marker dropped.
+ * @param {string} text */
 function cleanCapture(text) {
   return cleanPieceText(String(text || "").replace(/\s*[\r\n]+\s*/g, " ").replace(/\s+/g, " "));
 }
+/**
+ * @param {PluginApp} app
+ * @param {string} path
+ * @param {string} text
+ */
 async function appendCapture(app, path, text) {
   await appendToNote(app, path, `- [ ] ${text}`);
 }
-/** Take back a thought added in this sweep: the last line that is exactly it. */
+/** Take back a thought added in this sweep: the last line that is exactly it.
+ * @param {PluginApp} app
+ * @param {string} path
+ * @param {string} text */
 async function removeCapture(app, path, text) {
   const file = app.vault.getAbstractFileByPath((0, obsidian.normalizePath)(path));
   if (!(file instanceof obsidian.TFile)) return false;
@@ -4802,13 +5712,16 @@ async function removeCapture(app, path, text) {
 /** Run the sweep. Returns how many thoughts were captured.
  *
  * Next (or Enter on an empty line) moves on; "Skip the rest of…" passes over the remaining
- * prompts of the same kind — the rest of your projects, say; Finish ends it. */
+ * prompts of the same kind — the rest of your projects, say; Finish ends it.
+ * @param {Ctx} ctx
+ * @param {(captured: number) => void} onProgress */
 async function runSweep(ctx, onProgress) {
   const { prompter, settings } = ctx;
   const path = sweepInboxPath(settings);
   const prompts = await sweepPrompts(ctx.app, settings);
   let captured = 0;
   const handlers = {
+    /** @param {string} typed */
     add: async (typed) => {
       const text = cleanCapture(typed);
       if (!text) return null;
@@ -4817,6 +5730,7 @@ async function runSweep(ctx, onProgress) {
       if (onProgress) onProgress(captured);
       return text;
     },
+    /** @param {string} text */
     remove: async (text) => {
       if (!(await removeCapture(ctx.app, path, text))) return false;
       captured--;
@@ -4849,7 +5763,13 @@ async function runSweep(ctx, onProgress) {
 // src/review/ReviewView.ts
 // ----------------------------------------------------------------------
 var VIEW_TYPE_REVIEW = "gtd-clarify-review";
+/**
+ * @param {obsidian.SearchMatches} matches
+ * @param {number} start
+ * @param {number} end
+ */
 function clipMatches(matches, start, end) {
+  /** @type {obsidian.SearchMatches} */
   const out = [];
   for (const [s, e] of matches) {
     const cs = Math.max(s, start);
@@ -4880,7 +5800,8 @@ var LINK_TOKEN_RE = /(!?)\[\[([^\]|\n]+?)(?:\|([^\]\n]*))?\]\]|\[([^\]\n]*)\]\((
  * Trailing ? ! . , : * _ ~ are sentence punctuation, not URL. A trailing ")" belongs to
  * the URL only if it closes a "(" inside it, so "(see https://x.com/a)" drops it while
  * "…IN%20(Done%2C%20Closed)" keeps it. A trailing "&name;" is an entity reference.
- * Repeated until nothing changes, since stripping one can expose another: "x.com/a)." */
+ * Repeated until nothing changes, since stripping one can expose another: "x.com/a)."
+ * @param {string} url */
 function trimAutolink(url) {
   let u = String(url || "");
   for (; ; ) {
@@ -4899,6 +5820,10 @@ function trimAutolink(url) {
 /** A target with a scheme (https:, mailto:, obsidian:) leaves the vault; anything else in a
  * markdown link — "Specs/My%20Spec.md" — is a note, exactly as Obsidian treats it. */
 var URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
+/**
+ * @param {string} url
+ * @param {number} max
+ */
 function compactUrl(url, max) {
   let host, rest;
   try {
@@ -4914,7 +5839,8 @@ function compactUrl(url, max) {
   const keep = max - host.length - 1;
   return keep > 1 ? host + rest.slice(0, keep) + "\u2026" : host + "/\u2026";
 }
-/** Open a URL outside Obsidian. Guarded so the module can be loaded without a DOM. */
+/** Open a URL outside Obsidian. Guarded so the module can be loaded without a DOM.
+ * @param {string} url */
 function openExternalUrl(url) {
   try {
     if (typeof window !== "undefined" && typeof window.open === "function") {
@@ -4927,7 +5853,9 @@ function openExternalUrl(url) {
 /** Append `text` to `el`, replacing links with compact clickable anchors. Text outside links is
  * appended verbatim so pre-wrap indentation on nested subtasks survives. */
 /** How Obsidian shows a wikilink: its alias if it has one, otherwise the target with a
- * heading or block shown as "Note › Heading", and a same-note link as just "Heading". */
+ * heading or block shown as "Note › Heading", and a same-note link as just "Heading".
+ * @param {string} target
+ * @param {string} alias */
 function wikiLabel(target, alias) {
   const a = String(alias || "").trim();
   if (a) return a;
@@ -4942,7 +5870,11 @@ function wikiLabel(target, alias) {
 /** An internal link: opens a note in the vault through the caller's opener.
  *
  * Marked unresolved, as Obsidian marks them, when the note doesn't exist yet — because
- * opening one creates it, which is Obsidian's own behaviour but shouldn't be a surprise. */
+ * opening one creates it, which is Obsidian's own behaviour but shouldn't be a surprise.
+ * @param {HTMLElement} el
+ * @param {string} linktext
+ * @param {string} label
+ * @param {InternalLinks} internal */
 function renderInternalLink(el, linktext, label, internal) {
   const linkpath = linktext.split("#")[0].trim();
   const exists = typeof internal.exists === "function" ? internal.exists(linkpath) !== false : true;
@@ -4963,7 +5895,10 @@ function renderInternalLink(el, linktext, label, internal) {
  *
  * `internal` — `{ open(linktext), exists(linkpath) }` — is how internal links reach the
  * vault. Without it they are left exactly as written: a link that can't be followed is
- * better shown as text than as something that looks clickable and isn't. */
+ * better shown as text than as something that looks clickable and isn't.
+ * @param {HTMLElement} el
+ * @param {string} text
+ * @param {InternalLinks} internal */
 function renderTaskText(el, text, internal) {
   const canOpen = !!(internal && typeof internal.open === "function");
   LINK_TOKEN_RE.lastIndex = 0;
@@ -5024,6 +5959,11 @@ function renderTaskText(el, text, internal) {
   }
   if (last < text.length) el.appendText(text.slice(last));
 }
+/**
+ * @param {HTMLElement} el
+ * @param {string} text
+ * @param {obsidian.SearchMatches} matches
+ */
 function renderHighlighted(el, text, matches) {
   let last = 0;
   for (const [s, e] of matches) {
@@ -5058,6 +5998,11 @@ var RANK = {
   PATH_FUZZY: 9
 };
 var SUGGEST_LIMIT = 50;
+/**
+ * @param {string} text
+ * @param {string} lowerQuery
+ * @returns {obsidian.SearchMatches | null}
+ */
 function substringMatch(text, lowerQuery) {
   const i = text.toLowerCase().indexOf(lowerQuery);
   return i < 0 ? null : [[i, i + lowerQuery.length]];
@@ -5065,7 +6010,9 @@ function substringMatch(text, lowerQuery) {
 /** Cheap subsequence test. If the query's characters do not appear in order anywhere in
  * the text then no fuzzy match is possible, so the expensive scorer can be skipped
  * outright. Whitespace is stripped so this stays a superset of what fuzzy would accept —
- * it must never reject something the real scorer would have matched. */
+ * it must never reject something the real scorer would have matched.
+ * @param {string} lowerText
+ * @param {string} queryChars */
 function isSubsequence(lowerText, queryChars) {
   let i = 0;
   for (const ch of queryChars) {
@@ -5075,20 +6022,25 @@ function isSubsequence(lowerText, queryChars) {
   }
   return true;
 }
+/** @param {string} path */
 function countSlashes(path) {
   let n = 0;
   for (let i = 0; i < path.length; i++) if (path[i] === "/") n++;
   return n;
 }
-/** Frontmatter aliases, tolerating both `aliases:` (list or scalar) and legacy `alias:`. */
+/** Frontmatter aliases, tolerating both `aliases:` (list or scalar) and legacy `alias:`.
+ * @param {PluginApp} app
+ * @param {obsidian.TFile} file
+ * @returns {string[]} */
 function fileAliases(app, file) {
   var _a, _b;
   const fm = (_b = (_a = app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter) != null ? _b : null;
   if (!fm) return [];
-  const raw = fm.aliases != null ? fm.aliases : fm.alias;
+  // Frontmatter is whatever the note says, so nothing about its shape is assumed.
+  const raw = /** @type {unknown} */ (fm.aliases != null ? fm.aliases : fm.alias);
   if (!raw) return [];
-  const list = Array.isArray(raw) ? raw : [raw];
-  return list.filter((a) => typeof a === "string" && a.length > 0);
+  const list = /** @type {unknown[]} */ (Array.isArray(raw) ? raw : [raw]);
+  return /** @type {string[]} */ (list.filter((a) => typeof a === "string" && a.length > 0));
 }
 /** Obsidian's "Excluded files" list (Settings -> Files and links). Those paths are
  * deprioritised — not hidden — in search, the quick switcher and graph view.
@@ -5101,16 +6053,18 @@ function fileAliases(app, file) {
  * The manual fallback runs only if that method disappears. It reads the raw
  * `userIgnoreFilters` config and understands plain folder/file prefixes plus
  * /regex/flags entries. It is deliberately conservative and never throws: a filter it
- * cannot parse is skipped, so the worst case is a file that fails to get deprioritised. */
+ * cannot parse is skipped, so the worst case is a file that fails to get deprioritised.
+ * @param {PluginApp} app
+ * @returns {(path: string) => boolean} */
 function makeIgnoreMatcher(app) {
-  var _a, _b;
-  const raw = (_b = (_a = app.vault) == null ? void 0 : _a.getConfig) == null ? void 0 : _b.call(_a, "userIgnoreFilters");
+  const raw = app.vault?.getConfig?.("userIgnoreFilters");
   const filters = Array.isArray(raw) ? raw : null;
   // Nothing excluded (the common case): skip the per-file work entirely rather than
   // calling into Obsidian once for every note in the vault.
   if (filters !== null && filters.length === 0) return () => false;
-  const mc = app.metadataCache;
-  if (typeof (mc == null ? void 0 : mc.isUserIgnored) === "function") {
+  // isUserIgnored is undocumented, so it is typed here and checked for before use.
+  const mc = /** @type {obsidian.MetadataCache & { isUserIgnored?(path: string): boolean }} */ (app.metadataCache);
+  if (typeof mc?.isUserIgnored === "function") {
     return (path) => {
       try {
         return !!mc.isUserIgnored(path);
@@ -5120,7 +6074,9 @@ function makeIgnoreMatcher(app) {
     };
   }
   if (filters === null) return () => false;
+  /** @type {string[]} */
   const prefixes = [];
+  /** @type {RegExp[]} */
   const regexes = [];
   for (const f of filters) {
     if (typeof f !== "string" || !f) continue;
@@ -5151,8 +6107,14 @@ function makeIgnoreMatcher(app) {
   };
 }
 /** Precompute the per-item facts the scorer needs. Built ONCE per modal, not per
- * keystroke — metadataCache lookups across a whole vault are not free. */
+ * keystroke — metadataCache lookups across a whole vault are not free.
+ * @template T
+ * @param {PluginApp} app
+ * @param {T[]} items
+ * @param {(item: T) => { name: string, path: string, aliases?: string[] }} toFacts
+ * @returns {Candidate<T>[]} */
 function buildCandidates(app, items, toFacts) {
+  /** @type {Map<string, number>} */
   const recent = /* @__PURE__ */ new Map();
   const last = app.workspace.getLastOpenFiles();
   for (let i = 0; i < last.length; i++) if (!recent.has(last[i])) recent.set(last[i], i);
@@ -5172,6 +6134,14 @@ function buildCandidates(app, items, toFacts) {
     };
   });
 }
+/**
+ * @template T
+ * @param {Candidate<T>} cand
+ * @param {string} lowerQuery
+ * @param {string} queryChars
+ * @param {(text: string) => obsidian.SearchResult | null} fuzzy
+ * @returns {Ranked<T> | null}
+ */
 function scoreCandidate(cand, lowerQuery, queryChars, fuzzy) {
   // Excluded paths sort BELOW every non-excluded result, unconditionally — the same
   // behaviour as the quick switcher.
@@ -5187,6 +6157,13 @@ function scoreCandidate(cand, lowerQuery, queryChars, fuzzy) {
   // but kept separate so the debug output can distinguish "excluded" from "sank because
   // excluded" if this ever needs revisiting.
   const demoted = cand.ignored;
+  /**
+   * @param {number} rank
+   * @param {number} score
+   * @param {obsidian.SearchMatches | null} nameMatches
+   * @param {obsidian.SearchMatches | null} [pathMatches]
+   * @param {string | null} [alias]
+   */
   const hit = (rank, score, nameMatches, pathMatches, alias) => ({
     item: cand.item,
     // `match` is retained for shape compatibility; SuggestModal passes this object
@@ -5255,6 +6232,11 @@ function scoreCandidate(cand, lowerQuery, queryChars, fuzzy) {
   }
   return null;
 }
+/**
+ * @template T
+ * @param {Ranked<T>} a
+ * @param {Ranked<T>} b
+ */
 function compareScored(a, b) {
   // Excluded paths sink below everything else, whatever they matched on.
   if (a.demoted !== b.demoted) return a.demoted ? 1 : -1;
@@ -5264,6 +6246,12 @@ function compareScored(a, b) {
   if (a.depth !== b.depth) return a.depth - b.depth;
   return a.path.localeCompare(b.path);
 }
+/**
+ * @template T
+ * @param {Candidate<T>[]} candidates
+ * @param {string} query
+ * @returns {Ranked<T>[]}
+ */
 function rankCandidates(candidates, query) {
   const q = query.trim();
   if (!q) {
@@ -5294,7 +6282,14 @@ function rankCandidates(candidates, query) {
   out.sort(compareScored);
   return out.slice(0, SUGGEST_LIMIT);
 }
+/** @extends {obsidian.SuggestModal<Ranked<obsidian.TFile>>} */
 var NoteSuggestModal = class extends obsidian.SuggestModal {
+  /**
+   * @param {PluginApp} app
+   * @param {obsidian.TFile[]} items
+   * @param {string} placeholder
+   * @param {(file: obsidian.TFile | null) => void} onPick
+   */
   constructor(app, items, placeholder, onPick) {
     super(app);
     this.items = items;
@@ -5318,10 +6313,18 @@ var NoteSuggestModal = class extends obsidian.SuggestModal {
    * with the new build loaded. On SuggestModal getSuggestions is ABSTRACT — there is no
    * inherited implementation to fall back to, so this is the only ranking that can run.
    * If it ever fails, the picker shows nothing at all rather than quietly reverting. */
+  /**
+   * @param {string} query
+   * @returns {Ranked<obsidian.TFile>[]}
+   */
   getSuggestions(query) {
     const results = rankCandidates(this.candidates, query);
     return results;
   }
+  /**
+   * @param {Ranked<obsidian.TFile>} match
+   * @param {HTMLElement} el
+   */
   renderSuggestion(match, el) {
     var _a, _b;
     const file = match.item;
@@ -5341,6 +6344,7 @@ var NoteSuggestModal = class extends obsidian.SuggestModal {
       renderHighlighted(note, folder, (_b = match.pathMatches) != null ? _b : []);
     }
   }
+  /** @param {Ranked<obsidian.TFile>} match */
   onChooseSuggestion(match) {
     this.picked = true;
     this.onPick(match.item);
@@ -5354,7 +6358,13 @@ var NoteSuggestModal = class extends obsidian.SuggestModal {
 };
 /** Projects in other notes: the project, with the note it is in beneath it. Ranked like the
  * note picker, on the project's words and its note's path. */
+/** @extends {obsidian.SuggestModal<Ranked<ProjectChoice>>} */
 var ProjectSuggestModal = class extends obsidian.SuggestModal {
+  /**
+   * @param {PluginApp} app
+   * @param {ProjectChoice[]} projects
+   * @param {(project: ProjectChoice | null) => void} onPick
+   */
   constructor(app, projects, onPick) {
     super(app);
     this.onPick = onPick;
@@ -5371,9 +6381,17 @@ var ProjectSuggestModal = class extends obsidian.SuggestModal {
       aliases: []
     }));
   }
+  /**
+   * @param {string} query
+   * @returns {Ranked<ProjectChoice>[]}
+   */
   getSuggestions(query) {
     return rankCandidates(this.candidates, query);
   }
+  /**
+   * @param {Ranked<ProjectChoice>} match
+   * @param {HTMLElement} el
+   */
   renderSuggestion(match, el) {
     var _a, _b;
     el.addClass("mod-complex");
@@ -5383,6 +6401,7 @@ var ProjectSuggestModal = class extends obsidian.SuggestModal {
     const note = content.createDiv({ cls: "suggestion-note" });
     renderHighlighted(note, match.item.file.path.replace(/\.md$/, ""), (_b = match.pathMatches) != null ? _b : []);
   }
+  /** @param {Ranked<ProjectChoice>} match */
   onChooseSuggestion(match) {
     this.picked = true;
     this.onPick(match.item);
@@ -5394,7 +6413,12 @@ var ProjectSuggestModal = class extends obsidian.SuggestModal {
     }, 0);
   }
 };
+/** @extends {obsidian.SuggestModal<Ranked<obsidian.TFolder>>} */
 var FolderSuggestModal = class extends obsidian.SuggestModal {
+  /**
+   * @param {PluginApp} app
+   * @param {(folder: obsidian.TFolder | null) => void} onPick
+   */
   constructor(app, onPick) {
     super(app);
     this.onPick = onPick;
@@ -5402,16 +6426,24 @@ var FolderSuggestModal = class extends obsidian.SuggestModal {
     this.limit = SUGGEST_LIMIT;
     this.setPlaceholder("Choose a destination folder\u2026");
     this.emptyStateText = "No matching folders.";
-    this.folders = app.vault.getAllLoadedFiles().filter((f) => f instanceof obsidian.TFolder);
+    this.folders = /** @type {obsidian.TFolder[]} */ (app.vault.getAllLoadedFiles().filter((f) => f instanceof obsidian.TFolder));
     this.candidates = buildCandidates(app, this.folders, (folder) => ({
       name: folder.isRoot() ? "/ (vault root)" : folder.name,
       path: folder.isRoot() ? "/" : folder.path,
       aliases: []
     }));
   }
+  /**
+   * @param {string} query
+   * @returns {Ranked<obsidian.TFolder>[]}
+   */
   getSuggestions(query) {
     return rankCandidates(this.candidates, query);
   }
+  /**
+   * @param {Ranked<obsidian.TFolder>} match
+   * @param {HTMLElement} el
+   */
   renderSuggestion(match, el) {
     var _a, _b;
     const folder = match.item;
@@ -5432,6 +6464,7 @@ var FolderSuggestModal = class extends obsidian.SuggestModal {
       renderHighlighted(note, parent, (_b = match.pathMatches) != null ? _b : []);
     }
   }
+  /** @param {Ranked<obsidian.TFolder>} match */
   onChooseSuggestion(match) {
     this.picked = true;
     this.onPick(match.item);
@@ -5444,10 +6477,17 @@ var FolderSuggestModal = class extends obsidian.SuggestModal {
   }
 };
 var ReviewView = class extends obsidian.ItemView {
+  /**
+   * @param {obsidian.WorkspaceLeaf} leaf
+   * @param {GtdFlowPlugin} plugin
+   */
   constructor(leaf, plugin) {
     super(leaf);
     this.plugin = plugin;
     this.exiting = false;
+    /** Rejects the prompt on screen, if one is waiting; see rejectPending.
+     * @type {((reason: Error) => void) | undefined} */
+    this.pendingReject = void 0;
   }
   getViewType() {
     return VIEW_TYPE_REVIEW;
@@ -5458,7 +6498,7 @@ var ReviewView = class extends obsidian.ItemView {
   getIcon() {
     return "list-checks";
   }
-  async onOpen() {
+  onOpen() {
     const root = this.contentEl;
     root.empty();
     root.addClass("gtd-clarify-view");
@@ -5473,11 +6513,13 @@ var ReviewView = class extends obsidian.ItemView {
     this.bodyEl.setAttribute("tabindex", "-1");
     this.navEl = root.createDiv({ cls: "gtd-clarify-nav" });
     this.pendingKeys = null;
-    this.registerDomEvent(document, "keydown", (e) => this.onAnswerKey(e));
+    // The pane's own window: keys pressed there answer, wherever the pane has been moved to.
+    this.registerDomEvent(this.containerEl.ownerDocument, "keydown", (e) => this.onAnswerKey(e));
     this.renderNav();
     this.headerEl.setText("Run \u201CProcess\u201D or \u201COrganise\u201D from a note, or \u201CSweep\u201D, to begin.");
+    return Promise.resolve();
   }
-  async onClose() {
+  onClose() {
     if (this.taskScrollObserver) {
       try {
         this.taskScrollObserver.disconnect();
@@ -5487,8 +6529,12 @@ var ReviewView = class extends obsidian.ItemView {
       this.taskScrollObserver = void 0;
     }
     this.rejectPending(new ReviewControl("exit"));
+    return Promise.resolve();
   }
-  /** Entry point invoked by the commands (Spec: GEN-1, GEN-3). */
+  /** Entry point invoked by the commands (Spec: GEN-1, GEN-3).
+   * @param {string} mode
+   * @param {obsidian.TFile} file
+   * @param {{ thisNote?: boolean }} [opts] */
   async start(mode, file, opts = {}) {
     if (!file) {
       new obsidian.Notice("Open a note first.");
@@ -5519,13 +6565,15 @@ var ReviewView = class extends obsidian.ItemView {
     }
     if (!source) return;
     const items = await source.collect();
-    if (source.errors && source.errors.length) {
+    // Only a query can fail to run; a note's own tasks always can be.
+    const queryErrors = source instanceof TasksQueryTaskSource ? source.errors : null;
+    if (queryErrors && queryErrors.length) {
       // Report a bad query rather than silently reviewing nothing — an unrecognised
       // filter that quietly matched everything would be far worse than an error.
       this.headerEl.setText("Query could not be run.");
       this.bodyEl.empty();
       this.bodyEl.createEl("p", { text: "Unsupported filters:", cls: "gtd-clarify-question" });
-      for (const err of source.errors) {
+      for (const err of queryErrors) {
         this.bodyEl.createEl("div", { text: err, cls: "gtd-clarify-queryerror" });
       }
       this.bodyEl.createEl("div", {
@@ -5541,6 +6589,7 @@ var ReviewView = class extends obsidian.ItemView {
       this.bodyEl.empty();
       return;
     }
+    /** @type {Ctx} */
     const ctx = {
       app: this.app,
       plugin: this.plugin,
@@ -5565,7 +6614,9 @@ var ReviewView = class extends obsidian.ItemView {
       * the previous scalar did. A query source draws tasks from many files, where one
       * running total would apply file A's growth to file B's line numbers and corrupt
       * every task after the first edit. */
+    /** @type {Map<string, number>} */
     const offsets = /* @__PURE__ */ new Map();
+    /** @param {string} path */
     const offsetOf = (path) => {
       const v = offsets.get(path);
       return v === void 0 ? 0 : v;
@@ -5580,6 +6631,7 @@ var ReviewView = class extends obsidian.ItemView {
      * The counter's denominator is "tasks in this review that still exist", so disposing
      * of one shrinks it. Indexed rather than counted so a rewind, which puts the task
      * back, can clear its entry. */
+    /** @type {boolean[]} index → whether that task was disposed of */
     const disposedAt = [];
     const goneBefore = () => disposedAt.reduce((n, v) => n + (v ? 1 : 0), 0);
     /* Pristine line numbers, captured once. These MUST NOT be re-derived from the items
@@ -5600,6 +6652,7 @@ var ReviewView = class extends obsidian.ItemView {
      * is done by then there is nothing to organise, and labelling it first would also stop
      * the batch finding it by its words. */
     const onePass = mode === "process" && !!this.plugin.settings.organiseAfterProcessing;
+    /** @type {number[]} */
     let organiseLater = [];
     // What became of each task, for the summary. Set once a task is finished with, and
     // cleared when Back or Previous undoes it.
@@ -5764,7 +6817,10 @@ var ReviewView = class extends obsidian.ItemView {
    *
    * Each has its own undo, as in the main loop: Back undoes what was done to it and asks
    * again, Skip leaves it as it is, Exit leaves the rest. There is no previous task to go
-   * back to — the batch has come in between. */
+   * back to — the batch has come in between.
+   * @param {Ctx} ctx
+   * @param {ReviewItem[]} units
+   * @param {DefaultFilingStrategy} filing */
   async organiseAfterBatch(ctx, units, filing) {
     for (const unit of units) {
       for (let attempt = 0; attempt < MAX_SUBTASK_RETRIES && !this.exiting; attempt++) {
@@ -5788,6 +6844,10 @@ var ReviewView = class extends obsidian.ItemView {
     }
     this.canGoBack = false;
   }
+  /**
+   * @param {Ctx} ctx
+   * @param {QuickEntry[]} batch
+   */
   async runQuickBatch(ctx, batch) {
     let done = 0;
     for (let k = 0; k < batch.length; k++) {
@@ -5852,12 +6912,33 @@ var ReviewView = class extends obsidian.ItemView {
   /* `guidance` is a GTD tip, shown according to the tips setting. `note` is shown always:
    * it is for things specific to this item — why its wording was flagged — not general
    * advice you can learn once and stop reading. */
+  /**
+   * @template T
+   * @param {string} question
+   * @param {ChoiceOption<T>[]} options
+   * @param {string} [guidance]
+   * @param {string} [note]
+   * @returns {Promise<T>}
+   */
   choice(question, options, guidance, note) {
     return this.renderChoice(question, options, false, guidance, note);
   }
+  /**
+   * @template T
+   * @param {string} question
+   * @param {ChoiceOption<T>[]} options
+   * @param {string} guidance
+   * @param {string} [note]
+   * @returns {Promise<T | null>}
+   */
   optionalChoice(question, options, guidance, note) {
     return this.renderChoice(question, options, true, guidance, note);
   }
+  /**
+   * @param {string} question
+   * @param {TextPromptOptions} [opts]
+   * @returns {Promise<string>}
+   */
   text(question, opts) {
     return new Promise((resolve, reject) => {
       this.pendingReject = reject;
@@ -5948,6 +7029,7 @@ var ReviewView = class extends obsidian.ItemView {
           done = true;
           root.removeEventListener("click", eat, true);
         };
+        /** @param {Event} ev */
         const eat = (ev) => {
           ev.stopPropagation();
           ev.preventDefault();
@@ -5973,6 +7055,7 @@ var ReviewView = class extends obsidian.ItemView {
        * Safe against layout shift on blur: .gtd-clarify-body stacks its children from the
        * top, so restoring the nav shrinks the body from the bottom without moving the
        * input or the OK button under the user's finger. */
+      /** @param {boolean} on */
       const setTyping = (on) => {
         if (this.rootEl) this.rootEl.classList.toggle("is-typing", on);
       };
@@ -5992,7 +7075,10 @@ var ReviewView = class extends obsidian.ItemView {
    *
    * Pasting several lines makes ONE thought, with the lines joined by spaces: a pasted
    * paragraph is one thing on your mind, not one per line. A text field would otherwise
-   * drop the line breaks and run the words together. */
+   * drop the line breaks and run the words together.
+   * @param {SweepPrompt} prompt
+   * @param {SweepHandlers} handlers
+   * @returns {Promise<string>} */
   sweep(prompt, handlers) {
     return new Promise((resolve, reject) => {
       this.pendingReject = reject;
@@ -6020,6 +7106,7 @@ var ReviewView = class extends obsidian.ItemView {
       const finishBtn = appendRich(controls, "button", "**Finish** the sweep", "gtd-clarify-btn");
       let settled = false;
       let busy = false;
+      /** @param {string} action */
       const leave = (action) => {
         if (settled) return;
         settled = true;
@@ -6042,10 +7129,11 @@ var ReviewView = class extends obsidian.ItemView {
             li.createSpan({ text: added });
             const x = li.createEl("button", { text: "\u00D7", cls: "gtd-clarify-uncapture" });
             x.setAttribute("aria-label", `Take back \u201C${added}\u201D`);
-            x.addEventListener("click", async () => {
+            const takeBack = async () => {
               if (await handlers.remove(added)) li.remove();
               input.focus();
-            });
+            };
+            x.addEventListener("click", () => void takeBack());
           }
         } finally {
           busy = false;
@@ -6086,6 +7174,10 @@ var ReviewView = class extends obsidian.ItemView {
        * — otherwise the first tap only closes the keyboard, the pane reflows, and the tap
        * lands on nothing. The click the same tap still produces is swallowed, so it cannot
        * land on the next prompt's controls. */
+      /**
+       * @param {HTMLElement} btn
+       * @param {string} action
+       */
       const onward = (btn, action) => {
         btn.addEventListener("pointerdown", (e) => {
           e.preventDefault();
@@ -6097,6 +7189,7 @@ var ReviewView = class extends obsidian.ItemView {
       onward(nextBtn, "next");
       if (skipBtn) onward(skipBtn, "skip");
       onward(finishBtn, "finish");
+      /** @param {boolean} on */
       const setTyping = (on) => {
         if (this.rootEl) this.rootEl.classList.toggle("is-typing", on);
       };
@@ -6115,6 +7208,7 @@ var ReviewView = class extends obsidian.ItemView {
       done = true;
       root.removeEventListener("click", eat, true);
     };
+    /** @param {Event} ev */
     const eat = (ev) => {
       ev.stopPropagation();
       ev.preventDefault();
@@ -6134,6 +7228,7 @@ var ReviewView = class extends obsidian.ItemView {
     const settings = this.plugin.settings;
     const path = sweepInboxPath(settings);
     const name = path.slice(path.lastIndexOf("/") + 1).replace(/\.md$/i, "");
+    /** @param {number} n */
     const header = (n) => this.headerEl.setText(n ? `Sweep \u2014 ${n} captured` : "Sweep");
     header(0);
     const ctx = { app: this.app, plugin: this.plugin, settings, prompter: this };
@@ -6169,7 +7264,10 @@ var ReviewView = class extends obsidian.ItemView {
    *
    * The date it has read is shown as you type — "next Wednesday \u2192 Wednesday 28 October
    * 2026" — and only a date it could read, and that is in the future, can be used. The
-   * calendar is the browser's own date input, so it is a native picker on a phone. */
+   * calendar is the browser's own date input, so it is a native picker on a phone.
+   * @param {string} question
+   * @param {DatePromptOptions} [opts]
+   * @returns {Promise<string>} */
   date(question, opts = {}) {
     return new Promise((resolve, reject) => {
       this.pendingReject = reject;
@@ -6179,6 +7277,7 @@ var ReviewView = class extends obsidian.ItemView {
       this.renderQuestion(question, opts.guidance);
       const parse = opts.parse || ((t) => (/^\d{4}-\d{2}-\d{2}$/.test(t) ? t : null));
       const after = opts.after || "";
+      /** @type {string | null} */
       let chosen = null;
       const words = this.bodyEl.createEl("input", { type: "text", cls: "gtd-clarify-input" });
       for (const [k, v] of [["autocomplete", "off"], ["autocorrect", "off"], ["autocapitalize", "none"], ["spellcheck", "false"], ["enterkeyhint", "done"]]) {
@@ -6192,12 +7291,20 @@ var ReviewView = class extends obsidian.ItemView {
       if (after) calendar.min = shiftDate(after, 1);
       const ok = this.bodyEl.createEl("button", { text: "Use this date", cls: "gtd-clarify-btn mod-cta" });
       const back = this.bodyEl.createEl("button", { text: "Back", cls: "gtd-clarify-btn" });
+      /**
+       * @param {string} iso
+       * @param {string} problem
+       */
       const show = (iso, problem) => {
         chosen = iso && !problem ? iso : null;
         preview.setText(problem || (iso ? `\u2192 ${formatLongDate(iso)}` : ""));
         preview.toggleClass("is-problem", !!problem);
         ok.disabled = !chosen;
       };
+      /**
+       * @param {string} iso
+       * @param {string} typed
+       */
       const check = (iso, typed) => {
         if (!typed) return show(null, "");
         if (!iso) return show(null, "Not a date I can read \u2014 try \u2018next Wednesday\u2019 or \u20183 Nov\u2019.");
@@ -6241,6 +7348,7 @@ var ReviewView = class extends obsidian.ItemView {
         this.settlePrompt();
         resolve(null);
       });
+      /** @param {boolean} on */
       const setTyping = (on) => {
         if (this.rootEl) this.rootEl.classList.toggle("is-typing", on);
       };
@@ -6250,6 +7358,11 @@ var ReviewView = class extends obsidian.ItemView {
       window.requestAnimationFrame(() => words.focus());
     });
   }
+  /**
+   * @param {string} question
+   * @param {string} [guidance]
+   * @returns {Promise<boolean>}
+   */
   confirm(question, guidance) {
     return this.renderChoice(
       question,
@@ -6261,6 +7374,7 @@ var ReviewView = class extends obsidian.ItemView {
       guidance
     );
   }
+  /** @param {string} message */
   info(message) {
     this.headerEl.setText(message);
   }
@@ -6272,7 +7386,9 @@ var ReviewView = class extends obsidian.ItemView {
    * every piece of guidance was silently dropped while the tests still passed. */
   /** Render a heading and guidance into the pane without arming a prompt. Used while an
    * external dialogue is open, so the pane says what is being asked instead of showing a
-   * question that has already been answered. */
+   * question that has already been answered.
+   * @param {string} question
+   * @param {string} guidance */
   showGuidance(question, guidance) {
     this.pendingKeys = null;
     this.revealSelf();
@@ -6285,15 +7401,21 @@ var ReviewView = class extends obsidian.ItemView {
    * setting applies everywhere at once rather than at whichever sites remembered to check
    * it. "always" shows the tip in full; "onDemand" puts it behind an info button on the
    * question line; "off" omits it. The question itself is always shown — it is what is
-   * being asked, not commentary on it. */
+   * being asked, not commentary on it.
+   * @param {string} question
+   * @param {string} guidance
+   * @param {string} [note] */
   renderQuestion(question, guidance, note) {
     const q = this.bodyEl.createEl("p", { cls: "gtd-clarify-question" });
     const words = appendRich(q, "span", question);
     /* An id, so a field answering this question can name it as its label (aria-labelledby)
      * instead of repeating it in an aria-label, which Obsidian shows as a hover tooltip.
      * The pane's own token keeps ids apart if two review panes are open. */
+    /** @type {string} */
     this.paneToken = this.paneToken || Math.random().toString(36).slice(2, 8);
+    /** @type {number} */
     this.questionSeq = (this.questionSeq || 0) + 1;
+    /** @type {string} */
     this.questionId = `gtd-question-${this.paneToken}-${this.questionSeq}`;
     words.setAttribute("id", this.questionId);
     if (note) this.bodyEl.createEl("div", { text: note, cls: "gtd-clarify-note" });
@@ -6325,12 +7447,13 @@ var ReviewView = class extends obsidian.ItemView {
     return q;
   }
   revealSelf() {
-    this.app.workspace.revealLeaf(this.leaf);
+    void this.app.workspace.revealLeaf(this.leaf);
     // Every prompt routes through here, so this is the one place that reliably runs
     // whenever the nav's available actions may have changed (Restart/Revert appear and
     // disappear as the review moves between tasks). renderNav is cheap and idempotent.
     this.renderNav();
   }
+  /** @returns {Promise<obsidian.TFile | null>} */
   suggestFile() {
     return new Promise((resolve) => {
       new NoteSuggestModal(
@@ -6344,6 +7467,7 @@ var ReviewView = class extends obsidian.ItemView {
       ).open();
     });
   }
+  /** @returns {Promise<obsidian.TFile | null>} */
   suggestTemplate() {
     return new Promise((resolve) => {
       const files = getTemplateFiles(this.app, this.plugin.settings);
@@ -6353,6 +7477,7 @@ var ReviewView = class extends obsidian.ItemView {
       }).open();
     });
   }
+  /** @returns {Promise<obsidian.TFolder | null>} */
   suggestFolder() {
     return new Promise((resolve) => {
       new FolderSuggestModal(this.app, (folder) => {
@@ -6361,6 +7486,10 @@ var ReviewView = class extends obsidian.ItemView {
       }).open();
     });
   }
+  /**
+   * @param {ProjectChoice[]} projects
+   * @returns {Promise<ProjectChoice | null>}
+   */
   suggestProject(projects) {
     return new Promise((resolve) => {
       new ProjectSuggestModal(this.app, projects, (project) => {
@@ -6370,6 +7499,15 @@ var ReviewView = class extends obsidian.ItemView {
     });
   }
   /* ------------------------------- rendering -------------------------------- */
+  /**
+   * @template T
+   * @param {string} question
+   * @param {ChoiceOption<T>[]} options
+   * @param {boolean} optional
+   * @param {string} guidance
+   * @param {string} [note]
+   * @returns {Promise<T>}
+   */
   renderChoice(question, options, optional, guidance, note) {
     return new Promise((resolve, reject) => {
       this.pendingReject = reject;
@@ -6381,10 +7519,12 @@ var ReviewView = class extends obsidian.ItemView {
       this.firstQuestionOfReview = false;
       // The question, with what a good answer looks like available alongside it.
       this.renderQuestion(question, guidance, note || hint);
+      /** @param {T} value */
       const answer = (value) => {
         this.settlePrompt();
         resolve(value);
       };
+      /** @type {(() => void)[]} */
       const picks = [];
       let skip = null;
       if (optional) {
@@ -6403,6 +7543,7 @@ var ReviewView = class extends obsidian.ItemView {
         skip = () => answer(null);
         btn.addEventListener("click", skip);
       }
+      /** @type {string | undefined} */
       let lastGroup;
       options.forEach((opt, i) => {
         if (opt.group && opt.group !== lastGroup) {
@@ -6419,7 +7560,7 @@ var ReviewView = class extends obsidian.ItemView {
         } else {
           btn = appendRich(this.bodyEl, "button", opt.label, "gtd-clarify-btn");
         }
-        if (opt.suggested) btn.createSpan({ cls: "gtd-clarify-suggested", text: "suggested" });
+        if (opt.suggested) btn.createSpan({ cls: "gtd-clarify-suggested", text: "Suggested" });
         btn.addEventListener("click", pick);
         picks.push(pick);
       });
@@ -6427,7 +7568,7 @@ var ReviewView = class extends obsidian.ItemView {
       /* Keys go to the pane, not to the note, so a digit answers rather than being typed.
        * Only what a click on an answer would do anyway; a note being edited is left alone. */
       if (keys && typeof this.bodyEl.focus === "function") {
-        const active = typeof document !== "undefined" ? document.activeElement : null;
+        const active = typeof activeDocument !== "undefined" ? activeDocument.activeElement : null;
         if (!isTypingTarget(active)) {
           try {
             this.bodyEl.focus({ preventScroll: true });
@@ -6438,16 +7579,17 @@ var ReviewView = class extends obsidian.ItemView {
       }
     });
   }
-  /** A number key, while a choice is waiting. */
+  /** A number key, while a choice is waiting.
+   * @param {KeyboardEvent} e */
   onAnswerKey(e) {
-    const pick = keyAnswer(e, this.pendingKeys, typeof document !== "undefined" ? document : null);
+    const pick = keyAnswer(e, this.pendingKeys, typeof activeDocument !== "undefined" ? activeDocument : null);
     if (!pick) return;
     e.preventDefault();
     e.stopPropagation();
     const settings = this.plugin && this.plugin.settings;
     if (settings && !settings.numberKeysUsed) {
       settings.numberKeysUsed = true;
-      if (this.plugin.saveSettings) this.plugin.saveSettings();
+      if (this.plugin.saveSettings) void this.plugin.saveSettings();
     }
     pick();
   }
@@ -6490,31 +7632,46 @@ var ReviewView = class extends obsidian.ItemView {
     this.taskExpectedTop = Math.min(activeTop, max);
     el.scrollTop = this.taskExpectedTop;
   }
+  /**
+   * @param {HTMLElement} parent
+   * @param {string} text
+   * @param {string} cls
+   * @param {obsidian.TFile} file
+   */
   addTaskLine(parent, text, cls, file) {
     const line = parent.createDiv({ cls });
     renderTaskText(line, text, file ? this.internalLinksFor(file) : void 0);
     return line;
   }
-  /** Internal links resolve relative to the note the task lives in, as they would there. */
+  /** Internal links resolve relative to the note the task lives in, as they would there.
+   * @param {obsidian.TFile} file */
   internalLinksFor(file) {
     const sourcePath = file.path;
     return {
+      /** @param {string} linktext */
       open: (linktext) => this.openInternalLink(linktext, sourcePath),
+      /** @param {string} linkpath */
       exists: (linkpath) => this.linkResolves(linkpath, sourcePath)
     };
   }
   /** Open a linked note in a NEW tab. The review edits and highlights the note it is
    * working through by finding whichever editor shows it; replacing that editor would pull
-   * the note out from under the review. A new tab leaves it where it is. */
+   * the note out from under the review. A new tab leaves it where it is.
+   * @param {string} linktext
+   * @param {string} sourcePath */
   openInternalLink(linktext, sourcePath) {
     try {
-      const result = this.app.workspace.openLinkText(linktext, sourcePath, "tab");
-      if (result && typeof result.catch === "function") result.catch(() => {
+      // A link that fails to open has nothing to undo; the catch only keeps it quiet.
+      void Promise.resolve(this.app.workspace.openLinkText(linktext, sourcePath, "tab")).catch(() => {
       });
     } catch {
       new obsidian.Notice(`${PLUGIN_NAME}: couldn't open that link.`);
     }
   }
+  /**
+   * @param {string} linkpath
+   * @param {string} sourcePath
+   */
   linkResolves(linkpath, sourcePath) {
     if (!linkpath) return true;
     try {
@@ -6528,7 +7685,11 @@ var ReviewView = class extends obsidian.ItemView {
    * The line is found again by the task's text first: an earlier step of this same task
    * may have written above it since it was shown. An editor already showing the note is
    * reused rather than opening a second copy; otherwise the note opens in the main editor,
-   * which is the same leaf the review itself would use to edit it. */
+   * which is the same leaf the review itself would use to edit it.
+   * @param {obsidian.TFile} file
+   * @param {number} line
+   * @param {number} endLine
+   * @param {string} raw */
   async revealTaskInSource(file, line, endLine, raw) {
     try {
       let at = line;
@@ -6545,7 +7706,7 @@ var ReviewView = class extends obsidian.ItemView {
       const workspace = this.app.workspace;
       const showing = workspace.getLeavesOfType("markdown").find((l) => {
         var _a;
-        return ((_a = l.view.file) == null ? void 0 : _a.path) === file.path;
+        return ((_a = /** @type {obsidian.MarkdownView} */ (l.view).file) == null ? void 0 : _a.path) === file.path;
       });
       const leaf = showing || workspace.getLeaf(false);
       if (showing) {
@@ -6554,7 +7715,7 @@ var ReviewView = class extends obsidian.ItemView {
         await leaf.openFile(file, { active: true });
       }
       const place = () => {
-        const editor = leaf.view && leaf.view.editor;
+        const editor = leaf.view && /** @type {obsidian.MarkdownView} */ (leaf.view).editor;
         if (!editor) return;
         try {
           editor.setCursor({ line: at, ch: 0 });
@@ -6624,10 +7785,19 @@ var ReviewView = class extends obsidian.ItemView {
       this.rejectPending(new ReviewControl("exit"));
     });
   }
+  /**
+   * @param {string} mode
+   * @param {number} index
+   * @param {number} total
+   */
   renderProgress(mode, index, total) {
     const label = mode === "process" ? "Process" : "Organise";
     this.headerEl.setText(`${label} \u2014 task ${index + 1} of ${total}`);
   }
+  /**
+   * @param {string} message
+   * @param {string[]} [summary]
+   */
   renderDone(message, summary = []) {
     this.revealSelf();
     this.bodyEl.empty();
@@ -6638,8 +7808,9 @@ var ReviewView = class extends obsidian.ItemView {
     const list = this.bodyEl.createEl("ul", { cls: "gtd-clarify-summary" });
     for (const line of summary) list.createEl("li", { text: line });
   }
-  /** Spec: GEN-7 — scroll to and highlight the current top-level task in the source note. */
-  async highlightInSource(item) {
+  /** Spec: GEN-7 — scroll to and highlight the current top-level task in the source note.
+   * @param {ReviewItem} item */
+  highlightInSource(item) {
     var _a;
     var _b;
     this.focusOnLine(
@@ -6650,17 +7821,25 @@ var ReviewView = class extends obsidian.ItemView {
       (_a = item.parentRaw) != null ? _a : null,
       (_b = item.sourceLabel) != null ? _b : null
     );
+    // A promise, as callers await it; there is nothing to wait for today.
+    return Promise.resolve();
   }
   /** Spec: GEN-7 / ORG-9b — while organising a project's children, focus the active
    * subtask: highlight its line in the source and show it in the pane WITH the parent
-   * project line above it as context (rather than only ever showing the project line). */
+   * project line above it as context (rather than only ever showing the project line).
+   * @param {ReviewItem | ProjectRef} parent
+   * @param {number} childLine
+   * @param {string} childRaw */
   focusSubtask(parent, childLine, childRaw) {
     this.focusOnLine(parent.file, childLine, childLine, childRaw, parent.raw);
   }
   /** Ask, at the start of every review, whether to work through the current note or a
    * Tasks query. Offered for BOTH Process and Organise, and skipped entirely when the
    * installed Tasks version cannot supply a task list — in which case the current-file
-   * behaviour is the only one available and asking would be noise. */
+   * behaviour is the only one available and asking would be noise.
+   * @param {obsidian.TFile} file
+   * @param {string} projectTag
+   * @param {string} mode */
   async chooseSource(file, projectTag, mode) {
     const settings = this.plugin.settings;
     /* Deferral keeps work out of PROCESS — it has already been clarified, and comes back
@@ -6702,7 +7881,13 @@ var ReviewView = class extends obsidian.ItemView {
   /** Update the pane's task display and (if enabled) the source-editor highlight.
    * The pane is updated FIRST and unconditionally, so the active task always advances
    * even if the editor isn't ready or throws. When `parentRaw` is non-null it is shown
-   * above the active line as dimmed context. */
+   * above the active line as dimmed context.
+   * @param {obsidian.TFile} file
+   * @param {number} line
+   * @param {number} endLine
+   * @param {string} raw
+   * @param {string} parentRaw
+   * @param {string} [sourceLabel] */
   focusOnLine(file, line, endLine, raw, parentRaw, sourceLabel) {
     this.taskEl.empty();
     if (sourceLabel) {
@@ -6754,9 +7939,9 @@ var ReviewView = class extends obsidian.ItemView {
       try {
         const mdLeaf = this.app.workspace.getLeavesOfType("markdown").find((l) => {
           var _a;
-          return ((_a = l.view.file) == null ? void 0 : _a.path) === target.path;
+          return ((_a = /** @type {obsidian.MarkdownView} */ (l.view).file) == null ? void 0 : _a.path) === target.path;
         });
-        const view = mdLeaf == null ? void 0 : mdLeaf.view;
+        const view = mdLeaf == null ? void 0 : /** @type {obsidian.MarkdownView} */ (mdLeaf.view);
         if (view == null ? void 0 : view.editor) {
           view.editor.setCursor({ line: target.line, ch: 0 });
           view.editor.scrollIntoView(
@@ -6776,6 +7961,7 @@ var ReviewView = class extends obsidian.ItemView {
     this.pendingReject = void 0;
     this.pendingKeys = null;
   }
+  /** @param {Error} reason */
   rejectPending(reason) {
     const reject = this.pendingReject;
     this.pendingReject = void 0;
@@ -6800,17 +7986,21 @@ var ReviewView = class extends obsidian.ItemView {
    * hang it guards against; and if the modal never opened at all, the nav buttons are
    * already a way out. This targets the case actually observed: the dialogue is dismissed
    * and disappears, but its promise never settles, so the review waits on something that
-   * no longer exists. */
+   * no longer exists.
+   * @param {number} [goneMs] */
   watchAbandonedModal(goneMs = 1200) {
+    /** @type {number | null} */
     let timer = null;
+    /** @type {Promise<null>} */
     const promise = new Promise((resolve) => {
-      if (typeof document === "undefined") return;
+      if (typeof activeDocument === "undefined") return;
       let seen = false;
+      /** @type {number | null} */
       let goneSince = null;
       timer = window.setInterval(() => {
         let open = false;
         try {
-          open = !!(typeof document !== "undefined" && document.querySelector(".modal-container, .modal"));
+          open = !!(typeof activeDocument !== "undefined" && activeDocument.querySelector(".modal-container, .modal"));
         } catch {
           // The document can go away underneath us if the plugin is unloaded mid-wait.
           window.clearInterval(timer);
@@ -6844,8 +8034,15 @@ var ReviewView = class extends obsidian.ItemView {
       }
     };
   }
+  /**
+   * @template T
+   * @param {Promise<T>} promise
+   * @returns {Promise<T>}
+   */
   async withControls(promise) {
+    /** @type {(reason: Error) => void} */
     let rejectControl;
+    /** @type {Promise<never>} */
     const control = new Promise((_, reject) => {
       // Interrupting leaves the Tasks modal on screen, and a stray dialogue whose edit
       // would land on a line the restart has already rolled back is worse than the
@@ -6856,6 +8053,7 @@ var ReviewView = class extends obsidian.ItemView {
         reject(reason);
       };
     });
+    /** @type {((reason: Error) => void) | undefined} */
     const previous = this.pendingReject;
     this.pendingReject = rejectControl;
     const watch = typeof this.watchAbandonedModal === "function" ? this.watchAbandonedModal() : null;
@@ -6876,7 +8074,7 @@ var ReviewView = class extends obsidian.ItemView {
 // ----------------------------------------------------------------------
 // src/main.ts
 // ----------------------------------------------------------------------
-var BUILD_VERSION = "1.26.2";
+var BUILD_VERSION = "1.26.3";
 /* The name shown in the ribbon, the pane's tab and notices. It must match manifest.json's
  * "name"; a test checks that they agree. */
 var PLUGIN_NAME = "GTD Clarify";
@@ -6915,7 +8113,8 @@ var GtdFlowPlugin = class extends obsidian.Plugin {
   }
   onunload() {
   }
-  /** Capture the active file BEFORE the pane takes focus, then run the review. */
+  /** Capture the active file BEFORE the pane takes focus, then run the review.
+   * @param {string} mode */
   async startReview(mode) {
     const file = this.app.workspace.getActiveFile();
     if (!file) {
@@ -6939,11 +8138,14 @@ var GtdFlowPlugin = class extends obsidian.Plugin {
       leaf = (_a = workspace.getRightLeaf(false)) != null ? _a : workspace.getLeaf(true);
       await leaf.setViewState({ type: VIEW_TYPE_REVIEW, active: true });
     }
-    workspace.revealLeaf(leaf);
-    return leaf.view;
+    await workspace.revealLeaf(leaf);
+    return /** @type {ReviewView} */ (leaf.view);
   }
   async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    /** @type {unknown} whatever data.json holds, if anything */
+    const stored = await this.loadData();
+    const saved = /** @type {Partial<Settings> | null} */ (stored);
+    this.settings = /** @type {Settings} */ (Object.assign({}, DEFAULT_SETTINGS, saved));
   }
   async saveSettings() {
     await this.saveData(this.settings);

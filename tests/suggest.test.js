@@ -103,7 +103,9 @@ for (const keys of [true, false]) {
     p.optionalChoice("**Context**", [{ label: "Home", value: "home" }, { label: "Phone", value: "phone", suggested: true }]);
     const buttons = all(p.bodyEl).filter((n) => n.tag === "button" && !String(n.cls).includes("skip"));
     const tags = buttons.map((b) => all(b).filter((n) => n.cls === "gtd-clarify-suggested").map((n) => n.text));
-    assert.deepStrictEqual(tags, [[], ["suggested"]]);
+    // "Suggested" in the DOM (sentence case, for the linter and screen readers); styles.css
+    // shows it in lower case.
+    assert.deepStrictEqual(tags, [[], ["Suggested"]]);
     // Read out with it because the word is on the button, not through an aria-label (a tooltip).
     assert.ok(!("aria-label" in buttons[1].attrs), "no tooltip repeating the button");
   });
