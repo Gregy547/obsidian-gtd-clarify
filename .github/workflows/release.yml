@@ -18,6 +18,10 @@ on:
 
 permissions:
   contents: write
+  # For the provenance attestation: a signed record that these files were built here,
+  # by this workflow, from this repository's source.
+  id-token: write
+  attestations: write
 
 jobs:
   release:
@@ -59,6 +63,14 @@ jobs:
             fi
           fi
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Attest that the release files were built here, from this commit
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            main.js
+            manifest.json
+            styles.css
 
       - name: Take this version's notes from CHANGELOG.md
         run: |
