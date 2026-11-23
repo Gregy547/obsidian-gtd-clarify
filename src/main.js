@@ -84,8 +84,8 @@ import * as obsidian from "obsidian";
 /** A task being reviewed: where it is, what it said, and what became of it.
  * @typedef {Object} ReviewItem
  * @property {obsidian.TFile} file
- * @property {number} [startLine]
- * @property {number} [endLine]
+ * @property {number} startLine
+ * @property {number} endLine
  * @property {string} [raw]
  * @property {string} [status]
  * @property {boolean} [isProject]
@@ -171,6 +171,8 @@ import * as obsidian from "obsidian";
  * @property {TasksTask | null} [parent]
  */
 /** @typedef {"dueDate" | "startDate" | "scheduledDate" | "doneDate"} TasksDateField */
+/** Obsidian's moment, called for the time now.
+ * @typedef {() => { format(pattern: string): string }} MomentNow */
 /** @typedef {{ byId: Map<string, TasksTask[]> }} QueryContext */
 /** A compiled query filter.
  * @typedef {(task: TasksTask, ctx: QueryContext) => boolean} TaskFilter */
@@ -1828,12 +1830,22 @@ var TasksQueryTaskSource = class {
     }
   }
 };
+/** Obsidian's bundled moment, typed by the one thing used here: formatting the time now.
+ * Read through `unknown`, so it is typed whether or not the `moment` package's own types are
+ * installed where the code is checked — Obsidian's automated review does not have them.
+ * @returns {MomentNow | null} */
+function momentNow() {
+  /** @type {unknown} */
+  const moment = obsidian.moment;
+  return typeof moment === "function" ? /** @type {MomentNow} */ (moment) : null;
+}
 /** Today as YYYY-MM-DD. Uses the moment instance Obsidian re-exports so the review agrees
  * with what Tasks itself considers "today" (including any locale offset), falling back to
  * the platform Date only if that is unavailable. */
 function todayString() {
   try {
-    if (typeof obsidian.moment === "function") return obsidian.moment().format("YYYY-MM-DD");
+    const now = momentNow();
+    if (now) return now().format("YYYY-MM-DD");
   } catch {
     // Fall back to the platform's date below.
   }
@@ -2715,15 +2727,18 @@ function resolveEngine(app, engine) {
  * @param {PluginApp} app
  * @param {string} kind
  * @param {string} explicit
+ * @returns {string}
  */
 function formatNow(app, kind, explicit) {
   const opts = coreTemplatesOptions(app);
   const fallback = kind === "date" ? "YYYY-MM-DD" : "HH:mm";
   const fmt = explicit && explicit.length ? explicit : (kind === "date" ? opts.dateFormat : opts.timeFormat) || fallback;
+  // Always there in Obsidian; if it were not, calling it throws, as it always has here.
+  const now = /** @type {MomentNow} */ (momentNow());
   try {
-    return (0, obsidian.moment)().format(fmt);
+    return now().format(fmt);
   } catch {
-    return (0, obsidian.moment)().format(fallback);
+    return now().format(fallback);
   }
 }
 /**
@@ -3964,7 +3979,7 @@ async function askAfterAction(ctx, file, session) {
 }
 /**
  * @param {Ctx} ctx
- * @param {ReviewItem} item
+ * @param {{ file: obsidian.TFile, startLine: number, raw?: string }} item
  */
 function queueQuickAction(ctx, item) {
   if (!Array.isArray(ctx.quickBatch)) return false;
@@ -5171,7 +5186,7 @@ async function resolveEmptyProject(ctx, file, project, suggest = null) {
 }
 /** After a task's decision: if the project it was in now has nothing left to do, ask.
  * @param {Ctx} ctx
- * @param {ReviewItem} item
+ * @param {{ file: obsidian.TFile, outcome?: string }} item
  * @param {ProjectRef} project */
 async function settleProjectLeft(ctx, item, project) {
   const lines = (await ctx.app.vault.read(item.file)).split("\n");
@@ -6487,7 +6502,7 @@ var ReviewView = class extends obsidian.ItemView {
     this.exiting = false;
     /** Rejects the prompt on screen, if one is waiting; see rejectPending.
      * @type {((reason: Error) => void) | undefined} */
-    this.pendingReject = void 0;
+    this.pendingReject = undefined;
   }
   getViewType() {
     return VIEW_TYPE_REVIEW;
@@ -7827,7 +7842,7 @@ var ReviewView = class extends obsidian.ItemView {
   /** Spec: GEN-7 / ORG-9b — while organising a project's children, focus the active
    * subtask: highlight its line in the source and show it in the pane WITH the parent
    * project line above it as context (rather than only ever showing the project line).
-   * @param {ReviewItem | ProjectRef} parent
+   * @param {{ file?: obsidian.TFile, raw?: string | null }} parent
    * @param {number} childLine
    * @param {string} childRaw */
   focusSubtask(parent, childLine, childRaw) {
@@ -8074,7 +8089,7 @@ var ReviewView = class extends obsidian.ItemView {
 // ----------------------------------------------------------------------
 // src/main.ts
 // ----------------------------------------------------------------------
-var BUILD_VERSION = "1.26.3";
+var BUILD_VERSION = "1.26.4";
 /* The name shown in the ribbon, the pane's tab and notices. It must match manifest.json's
  * "name"; a test checks that they agree. */
 var PLUGIN_NAME = "GTD Clarify";

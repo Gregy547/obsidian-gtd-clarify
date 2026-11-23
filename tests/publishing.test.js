@@ -164,3 +164,31 @@ test("nothing in the source reaches for the main window's document by name", () 
   const code = source.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
   assert.ok(!/(?<![\w.])document\b/.test(code.replace(/activeDocument|ownerDocument/g, "")), "use activeDocument or ownerDocument");
 });
+
+test("each release carries a provenance attestation for the files Obsidian installs", () => {
+  const wf = read(".github/workflows/release.yml");
+  assert.match(wf, /^ {2}id-token: write$/m);
+  assert.match(wf, /^ {2}attestations: write$/m);
+  assert.match(wf, /uses: actions\/attest-build-provenance@v\d+\s+with:\s+subject-path: \|\s+main\.js\s+manifest\.json\s+styles\.css/);
+  // Attested before the release is made, so a release never goes out without one.
+  assert.ok(wf.indexOf("attest-build-provenance") < wf.indexOf("gh release create"));
+});
+
+test("the source is linted with strict null checks, as Obsidian's review checks it", () => {
+  // The review runs with strictNullChecks; tsconfig.json leaves it off for tsc, so the lint
+  // uses tsconfig.lint.json, which turns it on.
+  assert.strictEqual(JSON.parse(read("tsconfig.lint.json")).compilerOptions.strictNullChecks, true);
+  assert.match(read("eslint.config.mjs"), /project: \["\.\/tsconfig\.lint\.json"\]/);
+});
+
+test("Obsidian's moment is reached only through momentNow", () => {
+  // The review has no types for the moment package, so moment is `any` there. Read through
+  // `unknown` in one typed helper, it stays typed everywhere it is used.
+  const code = source.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+  assert.strictEqual((code.match(/obsidian\.moment\b/g) || []).length, 1, "only inside momentNow");
+  assert.match(source, /function momentNow\(\) \{\s+\/\*\* @type \{unknown\} \*\/\s+const moment = obsidian\.moment;/);
+});
+
+test("the README says which features list the files in a vault", () => {
+  assert.match(read("README.md"), /\*\*What it looks through\.\*\*[\s\S]*getMarkdownFiles\(\)[\s\S]*getAllLoadedFiles\(\)/);
+});

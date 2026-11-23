@@ -365,6 +365,19 @@ GTD Clarify makes no network requests and collects nothing. It reads and changes
 your vault — the ones a review works through and the ones you file tasks into — and keeps
 its settings in its own `data.json`. Links in a task open only when you click them.
 
+**What it looks through.** A few features list the notes or folders in your vault, using
+Obsidian's own file list (`vault.getMarkdownFiles()` and `vault.getAllLoadedFiles()`):
+
+- *Move to…*, and choosing a template or a folder, offer your notes, templates or folders
+  in a search box.
+- *One step in a bigger project* looks for open tasks with your project tag in other notes.
+  Obsidian's tag index narrows that to the notes that use the tag, and only those are read.
+- Sweep lists the notes in your areas-of-focus folder, if you have set one.
+- After Templater makes a new note, the note is found again by its name.
+
+These lists are used at the moment they are needed. They are not stored, and nothing in
+them leaves your vault.
+
 ## Settings
 
 | Setting | What it does |

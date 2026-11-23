@@ -3,6 +3,21 @@
 All notable changes to this project are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## 1.26.4 — 2026-11-23
+
+### Changed
+- **The rest of the review's warnings are gone.** Its checker runs stricter than the repo's
+  own: with strict null checks on, and without the types for the `moment` library Obsidian
+  bundles. So the date code saw `moment` as untyped, and everything that used today's date
+  inherited that. Obsidian's `moment` is now reached through one small typed helper, a few
+  types are tightened, and `npm run lint` checks with strict null checks too, so it matches.
+  Nothing a user sees changes.
+- **Releases are attested.** Each release now carries a signed GitHub attestation that its
+  files were built by the release workflow from this repository's source, which anyone can
+  check with `gh attestation verify`.
+- **The README says which features list the files in a vault**, and why: the note, template
+  and folder pickers, finding projects in other notes, and Sweep's areas of focus.
+
 ## 1.26.3 — 2026-11-23
 
 ### Changed

@@ -8,13 +8,6 @@ import tseslint from "typescript-eslint";
 export default defineConfig([
   globalIgnores(["main.js", "node_modules/", "tests/", "examples/", "version-bump.mjs"]),
   ...obsidianmd.configs.recommended,
-  // Obsidian's automated review also type-checks JavaScript, with typescript-eslint's
-  // type-checked rules (no-unsafe-*, no-floating-promises and the rest). Its own config only
-  // applies them to .ts files, so they are added here for the source, which is typed with JSDoc.
-  {
-    files: ["src/**/*.js"],
-    extends: [tseslint.configs.recommendedTypeChecked],
-  },
   {
     languageOptions: {
       parserOptions: { projectService: { allowDefaultProject: ["eslint.config.*"] } },
@@ -28,6 +21,18 @@ export default defineConfig([
         acronyms: ["GTD", "OK"],
         brands: ["GTD Clarify", "Templater", "Templates", "Esc"],
       }],
+    },
+  },
+  // Obsidian's automated review also type-checks JavaScript, with typescript-eslint's
+  // type-checked rules (no-unsafe-*, no-floating-promises and the rest). Its own config only
+  // applies them to .ts files, so they are added here for the source, which is typed with JSDoc.
+  // The review checks with strict null checks on, so the source is linted that way too, through
+  // tsconfig.lint.json; tsconfig.json itself stays as `tsc` checks the annotations.
+  {
+    files: ["src/**/*.js"],
+    extends: [tseslint.configs.recommendedTypeChecked],
+    languageOptions: {
+      parserOptions: { projectService: false, project: ["./tsconfig.lint.json"], tsconfigRootDir: import.meta.dirname },
     },
   },
 ]);

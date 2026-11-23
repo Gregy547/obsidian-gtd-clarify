@@ -1,6 +1,6 @@
 {
   "name": "obsidian-gtd-clarify",
-  "version": "1.26.3",
+  "version": "1.26.4",
   "description": "Guided GTD Process and Organise steps for Markdown tasks in Obsidian.",
   "main": "main.js",
   "private": true,
