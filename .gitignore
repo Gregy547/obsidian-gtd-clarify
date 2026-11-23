@@ -1,0 +1,22 @@
+# Personal plugin settings — written by Obsidian at runtime, never committed.
+# Committing this leaks your vault's folder structure and overwrites other
+# users' settings on install. Root only: examples/data.json is documentation.
+/data.json
+
+# Built by `npm run build` from src/main.js, and attached to each GitHub release.
+/main.js
+
+# Node
+node_modules/
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/
+
+# Release artifacts
+*.zip
