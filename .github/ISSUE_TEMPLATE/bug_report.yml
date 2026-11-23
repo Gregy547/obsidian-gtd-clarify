@@ -1,0 +1,44 @@
+name: Bug report
+description: Something in a review didn't do what you expected.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead. A screenshot of the pane helps.
+    validations:
+      required: true
+  - type: textarea
+    id: task
+    attributes:
+      label: The task line, if it matters
+      description: Paste the task as it was in the note before the review (remove anything private).
+      render: markdown
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+      description: Settings → Community plugins, next to the plugin's name.
+    validations:
+      required: true
+  - type: input
+    id: obsidian-version
+    attributes:
+      label: Obsidian version
+      description: Settings → General.
+    validations:
+      required: true
+  - type: input
+    id: tasks-version
+    attributes:
+      label: Tasks plugin version
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options: [Windows, macOS, Linux, iPhone or iPad, Android]
+    validations:
+      required: true
